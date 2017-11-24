@@ -9,7 +9,7 @@ setup(
     name='cabbage',
     version="0.1",
     description='AMQP client and server for RPC.',
-    packages=find_packages(),
+    packages=['cabbage'],
     install_requires=read('requirements.txt'),
     long_description=read('README.md'),
     classifiers=[
