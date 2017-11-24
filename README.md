@@ -1,0 +1,2 @@
+# cabbage: RPC over AMQP
+
