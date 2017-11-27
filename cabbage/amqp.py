@@ -194,8 +194,12 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
 
 class AbstractAsyncRpcClient(ABC):
     @abstractmethod
-    async def connect(self):
-        """Connect to server. If already connected, do nothing. """
+    async def init(self, app):
+        """Connect to AMQP and set up callback queue. """
+
+    @abstractmethod
+    async def close(self, app):
+        """Close connection"""
 
     @abstractmethod
     async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
@@ -212,7 +216,7 @@ class AsyncAmqpRpcClient(AbstractAsyncRpcClient):
         self.responses = dict()
         self.events = dict()
 
-    async def connect(self):
+    async def init(self, app):
         await self.connection.connect()
 
         channel = await self.connection.channel()
@@ -223,6 +227,9 @@ class AsyncAmqpRpcClient(AbstractAsyncRpcClient):
             self.on_response,
             queue_name=self.callback_queue,
         )
+
+    def close(self, app):
+        pass
 
     async def on_response(self, channel, body, envelope, properties):
         if properties.correlation_id in self.responses:
