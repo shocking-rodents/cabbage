@@ -1,5 +1,5 @@
 import os
-from setuptools import setup, find_packages
+from setuptools import setup
 
 
 def read(fname):
@@ -7,13 +7,14 @@ def read(fname):
 
 setup(
     name='cabbage',
-    version="0.1",
+    version='0.1',
     description='AMQP client and server for RPC.',
     packages=['cabbage'],
     install_requires=read('requirements.txt'),
     long_description=read('README.md'),
     classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Topic :: Utilities",
+        'Development Status :: 3 - Alpha',
+        'Programming Language :: Python :: 3.6',
+        'Topic :: Utilities',
     ],
 )

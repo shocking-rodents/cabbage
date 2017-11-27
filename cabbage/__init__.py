@@ -1,1 +1,2 @@
-from .amqp import AmqpConnection, AbstractAsyncRpcServer, AsyncAmqpRpcServer, AbstractAsyncRpcClient, AsyncAmqpRpcClient
+from .amqp import ServiceUnavailableError, AmqpConnection, AbstractAsyncRpcServer, AsyncAmqpRpcServer, \
+    AbstractAsyncRpcClient, AsyncAmqpRpcClient
