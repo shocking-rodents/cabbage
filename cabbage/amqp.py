@@ -141,19 +141,19 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
     async def handle_rpc(self, channel, body, envelope, properties):
         """Process request with handler and send response if needed. """
         try:
-            logger.debug(f'task. body {body}. routing_key={properties.reply_to}. '
-                         f'correlation_id={properties.correlation_id}')
+            logger.debug(f'> handle_rpc: body {body}, routing_key {properties.reply_to}, '
+                         f'correlation_id {properties.correlation_id}')
             if inspect.iscoroutinefunction(self.request_handler):
                 response = await self.request_handler(body)
             else:
                 response = self.request_handler(body)
         except Exception as e:
-            logger.error(f'task. error {e}. error type {e.__class__.__name__}. routing_key={properties.reply_to}. '
-                         f'correlation_id={properties.correlation_id}')
+            logger.error(f'handle_rpc. error <{e.__class__.__name__}> {e}, routing_key {properties.reply_to}, '
+                         f'correlation_id {properties.correlation_id}')
             await channel.basic_reject(delivery_tag=envelope.delivery_tag)
         else:
-            logger.debug(f'task. result {response}. responding? {properties.reply_to and response is not None}. '
-                         f'routing_key={properties.reply_to}. correlation_id={properties.correlation_id}')
+            logger.debug(f'< handle_rpc: result {response}, responding? {properties.reply_to and response is not None},'
+                         f' routing_key {properties.reply_to}, correlation_id {properties.correlation_id}')
 
             if properties.reply_to and response is not None:
                 response_params = dict(
@@ -257,6 +257,7 @@ class AsyncAmqpRpcClient(AbstractAsyncRpcClient):
                 'correlation_id': correlation_id,
             }
         channel = await self.connection.channel()
+        logger.debug(f'< send_rpc: destination {destination}, data {data}, ttl {ttl}, properties {properties}')
         await channel.basic_publish(
             exchange_name=self.exchange,
             routing_key=destination,
@@ -266,4 +267,6 @@ class AsyncAmqpRpcClient(AbstractAsyncRpcClient):
 
         if await_response:
             data = await self.await_response(correlation_id=correlation_id, ttl=ttl)
-            return data.decode('utf-8')
+            data = data.decode('utf-8')
+            logger.debug(f'> send_rpc: response {data}')
+            return data
