@@ -102,6 +102,7 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
         self.exchange = exchange
         self.routing_key = routing_key
         self.prefetch_count = prefetch_count or 1
+        self.channel = None
         self.keep_running = True
         self.amqp_transport = None
         self.amqp_protocol = None
@@ -109,27 +110,28 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
 
     async def connect(self):
         await self.connection.connect()
-        channel = await self.connection.channel()
+        self.channel = await self.connection.channel()
 
-        await channel.exchange_declare(exchange_name=self.exchange, type_name='topic', durable=True)
-        result = await channel.queue_declare(
-            queue_name=self.routing_key,
-            exclusive=True,
+    async def listen(self, exchange, queue, routing_key, exclusive=False):
+        await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
+        result = await self.channel.queue_declare(
+            queue_name=queue,
+            exclusive=exclusive,
             arguments={
                 'x-dead-letter-exchange': 'DLX',
                 'x-dead-letter-routing-key': 'dlx_rpc',
             },
         )
         queue = result['queue']
-        await channel.queue_bind(queue_name=queue,
-                                 exchange_name=self.exchange,
-                                 routing_key=self.routing_key)
-        await channel.basic_qos(
+        await self.channel.queue_bind(queue_name=queue,
+                                      exchange_name=exchange,
+                                      routing_key=routing_key)
+        await self.channel.basic_qos(
             prefetch_count=self.prefetch_count,
             prefetch_size=0,
             connection_global=False,
         )
-        await channel.basic_consume(
+        await self.channel.basic_consume(
             self.on_request,
             queue_name=queue,
         )
@@ -242,9 +244,9 @@ class AsyncAmqpRpcClient(AbstractAsyncRpcClient):
         try:
             await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
             return self.responses[correlation_id].result()
-        except asyncio.TimeoutError as e:
+        except asyncio.TimeoutError:
             logger.warning(f'request {correlation_id} timed out')
-            raise ServiceUnavailableError('Request timed out') from e
+            raise ServiceUnavailableError('Request timed out') from None
         finally:
             self.responses.pop(correlation_id)
 
