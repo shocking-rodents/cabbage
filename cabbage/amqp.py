@@ -85,22 +85,16 @@ class AmqpConnection:
 class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
     def __init__(self, connection: AmqpConnection,
                  request_handler: Union[Callable[[str], Optional[str]], Callable[[str], Awaitable[Optional[str]]]],
-                 exchange, queue, routing_key, prefetch_count=None, loop=None):
+                 prefetch_count=None, loop=None):
         """
         :param request_handler: request handler, function (def) or coroutine function (async def).
                                 It is to take a str and return either str or None, which means no response is required.
         :param loop: asyncio event loop
-        :param exchange: topic exchange name to get or create
-        :param queue: AMQP queue name
-        :param routing_key: AMQP routing key binding X to Q
         :param prefetch_count: per-consumer prefetch message limit, default 1
         """
-        self.queue = queue
         self.connection = connection
         self.request_handler = request_handler
         self.loop = loop or asyncio.get_event_loop()
-        self.exchange = exchange
-        self.routing_key = routing_key
         self.prefetch_count = prefetch_count or 1
         self.channel = None
         self.keep_running = True
@@ -113,6 +107,12 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
         self.channel = await self.connection.channel()
 
     async def listen(self, exchange, queue, routing_key, exclusive=False):
+        """
+        :param exchange: topic exchange name to get or create
+        :param queue: AMQP queue name
+        :param routing_key: AMQP routing key binding queue to exchange
+        :param exclusive: whether the queue is exclusive
+        """
         await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
         result = await self.channel.queue_declare(
             queue_name=queue,
@@ -131,6 +131,7 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
             prefetch_size=0,
             connection_global=False,
         )
+        logger.debug(f'listening on queue {queue}, bound to exchange {exchange} by {routing_key}')
         await self.channel.basic_consume(
             self.on_request,
             queue_name=queue,
@@ -154,10 +155,11 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
                          f'correlation_id {properties.correlation_id}')
             await channel.basic_reject(delivery_tag=envelope.delivery_tag)
         else:
-            logger.debug(f'< handle_rpc: result {response}, responding? {properties.reply_to and response is not None},'
-                         f' routing_key {properties.reply_to}, correlation_id {properties.correlation_id}')
+            logger.debug(f'< handle_rpc: result {response}, responding? '
+                         f'{properties.reply_to is not None and response is not None}, '
+                         f'routing_key {properties.reply_to}, correlation_id {properties.correlation_id}')
 
-            if properties.reply_to and response is not None:
+            if properties.reply_to is not None and response is not None:
                 response_params = dict(
                     payload=response,
                     exchange_name='',
@@ -186,6 +188,7 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
     async def run(self, app):
         """aiohttp-compatible on_startup coroutine. """
         app['amqp_connection'] = self.connection
+        await self.connect()
         asyncio.ensure_future(self.main_loop(), loop=app.loop)
 
     async def stop(self, app):
