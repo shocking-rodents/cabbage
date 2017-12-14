@@ -32,6 +32,14 @@ class AbstractAsyncRpcServer(ABC):
         pass
 
 
+class AbstractAsyncRpcClient(ABC):
+    @abstractmethod
+    async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
+        """Perform RPC call. If `response` is True, return result.
+        If no response is received after `ttl` seconds, raise ServiceUnavailableError.
+        """
+
+
 class AmqpConnection:
     def __init__(self, hosts, username, password, loop=None):
         """
@@ -81,7 +89,7 @@ class AmqpConnection:
             await self.protocol.close()
 
 
-class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
+class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
     def __init__(self, connection: AmqpConnection,
                  request_handler: Union[Callable[[str], Optional[str]], Callable[[str], Awaitable[Optional[str]]]],
                  prefetch_count=None, loop=None):
@@ -162,11 +170,10 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
                          f'correlation_id {properties.correlation_id}')
             await channel.basic_reject(delivery_tag=envelope.delivery_tag)
         else:
-            logger.debug(f'< handle_rpc: result {response}, responding? '
-                         f'{properties.reply_to is not None and response is not None}, '
+            responding = properties.reply_to is not None and response is not None
+            logger.debug(f'{"<" * responding} handle_rpc: result {response}, responding? {responding}, '
                          f'routing_key {properties.reply_to}, correlation_id {properties.correlation_id}')
-
-            if properties.reply_to is not None and response is not None:
+            if responding:
                 response_params = dict(
                     payload=response,
                     exchange_name='',
@@ -223,7 +230,7 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
         finally:
             self.responses.pop(correlation_id)
 
-    async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
+    async def send_rpc(self, exchange, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
         """Execute RPC on remote server. If await_response is True, the call blocks until the result is returned. """
         properties = dict()
         if await_response:
@@ -235,87 +242,7 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
         channel = await self.connection.channel()
         logger.debug(f'< send_rpc: destination {destination}, data {data}, ttl {ttl}, properties {properties}')
         await channel.basic_publish(
-            exchange_name=self.exchange,
-            routing_key=destination,
-            properties=properties,
-            payload=data.encode('utf-8'),
-        )
-
-        if await_response:
-            data = await self.await_response(correlation_id=correlation_id, ttl=ttl)
-            data = data.decode('utf-8')
-            logger.debug(f'> send_rpc: response {data}')
-            return data
-
-
-class AbstractAsyncRpcClient(ABC):
-    @abstractmethod
-    async def init(self, app):
-        """Connect to AMQP and set up callback queue. """
-
-    @abstractmethod
-    async def close(self, app):
-        """Close connection"""
-
-    @abstractmethod
-    async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
-        """Perform RPC call. If `response` is True, return result.
-        If no response is received after `ttl` seconds, raise ServiceUnavailableError.
-        """
-
-
-class AsyncAmqpRpcClient(AbstractAsyncRpcClient):
-    def __init__(self, connection: AmqpConnection, exchange):
-        self.connection = connection
-        self.exchange = exchange
-        self.callback_queue = None
-        self.responses = dict()
-        self.events = dict()
-
-    async def init(self, app):
-        await self.connection.connect()
-
-        channel = await self.connection.channel()
-        result = await channel.queue_declare(exclusive=True)
-        self.callback_queue = result['queue']
-
-        await channel.basic_consume(
-            self.on_response,
-            queue_name=self.callback_queue,
-        )
-
-    def close(self, app):
-        pass
-
-    async def on_response(self, channel, body, envelope, properties):
-        if properties.correlation_id in self.responses:
-            self.responses[properties.correlation_id].set_result(body)
-        else:
-            logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
-
-    async def await_response(self, correlation_id, ttl):
-        self.responses[correlation_id] = asyncio.Future()
-        try:
-            await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
-            return self.responses[correlation_id].result()
-        except asyncio.TimeoutError:
-            logger.warning(f'request {correlation_id} timed out')
-            raise ServiceUnavailableError('Request timed out') from None
-        finally:
-            self.responses.pop(correlation_id)
-
-    async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
-        properties = dict()
-        if await_response:
-            correlation_id = str(uuid.uuid4())
-            properties = {
-                'reply_to': self.callback_queue,
-                'correlation_id': correlation_id,
-            }
-        channel = await self.connection.channel()
-        logger.debug(f'< send_rpc: destination {destination}, data {data}, ttl {ttl}, properties {properties}')
-        await channel.basic_publish(
-            exchange_name=self.exchange,
+            exchange_name=exchange,
             routing_key=destination,
             properties=properties,
             payload=data.encode('utf-8'),
