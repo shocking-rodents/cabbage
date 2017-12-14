@@ -1,9 +1,0 @@
-setup.cfg
-setup.py
-cabbage/__init__.py
-cabbage/amqp.py
-cabbage.egg-info/PKG-INFO
-cabbage.egg-info/SOURCES.txt
-cabbage.egg-info/dependency_links.txt
-cabbage.egg-info/requires.txt
-cabbage.egg-info/top_level.txt

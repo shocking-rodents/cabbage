@@ -76,9 +76,8 @@ class AmqpConnection:
                 break
 
     async def disconnect(self):
-        if self.protocol is None:
-            return
-        if self.protocol.state in [CONNECTING, OPEN]:
+        if (self.protocol is not None and
+                self.protocol.state in [CONNECTING, OPEN]):
             await self.protocol.close()
 
 
@@ -101,28 +100,36 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
         self.amqp_transport = None
         self.amqp_protocol = None
         self.callback_queue = None
+        self.responses = dict()
 
     async def connect(self):
         await self.connection.connect()
         self.channel = await self.connection.channel()
 
-    async def listen(self, exchange, queue, routing_key, exclusive=False):
+        # setup client
+        result = await self.channel.queue_declare(exclusive=True)
+        self.callback_queue = result['queue']
+        await self.channel.basic_consume(
+            self.on_response,
+            queue_name=self.callback_queue,
+        )
+
+    async def listen(self, exchange, queue, routing_key, **queue_params):
         """
         :param exchange: topic exchange name to get or create
         :param queue: AMQP queue name
         :param routing_key: AMQP routing key binding queue to exchange
-        :param exclusive: whether the queue is exclusive
         """
         await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
         result = await self.channel.queue_declare(
             queue_name=queue,
-            exclusive=exclusive,
             arguments={
                 'x-dead-letter-exchange': 'DLX',
                 'x-dead-letter-routing-key': 'dlx_rpc',
             },
+            **queue_params
         )
-        queue = result['queue']
+        queue = result['queue']  # in case queue name is empty
         await self.channel.queue_bind(queue_name=queue,
                                       exchange_name=exchange,
                                       routing_key=routing_key)
@@ -178,6 +185,7 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
             await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
 
     async def main_loop(self):
+        """Main routine for the server. """
         try:
             while self.keep_running:
                 await self.connect()
@@ -195,6 +203,49 @@ class AsyncAmqpRpcServer(AbstractAsyncRpcServer):
         """aiohttp-compatible on_cleanup coroutine. """
         self.keep_running = False
         await self.connection.disconnect()
+
+    async def on_response(self, channel, body, envelope, properties):
+        """Mark future as done. """
+        if properties.correlation_id in self.responses:
+            self.responses[properties.correlation_id].set_result(body)
+        else:
+            logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
+
+    async def await_response(self, correlation_id, ttl):
+        """Wait for a response with given correlation id (blocking call). """
+        self.responses[correlation_id] = asyncio.Future()
+        try:
+            await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
+            return self.responses[correlation_id].result()
+        except asyncio.TimeoutError:
+            logger.warning(f'request {correlation_id} timed out')
+            raise ServiceUnavailableError('Request timed out') from None
+        finally:
+            self.responses.pop(correlation_id)
+
+    async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
+        """Execute RPC on remote server. If await_response is True, the call blocks until the result is returned. """
+        properties = dict()
+        if await_response:
+            correlation_id = str(uuid.uuid4())
+            properties = {
+                'reply_to': self.callback_queue,
+                'correlation_id': correlation_id,
+            }
+        channel = await self.connection.channel()
+        logger.debug(f'< send_rpc: destination {destination}, data {data}, ttl {ttl}, properties {properties}')
+        await channel.basic_publish(
+            exchange_name=self.exchange,
+            routing_key=destination,
+            properties=properties,
+            payload=data.encode('utf-8'),
+        )
+
+        if await_response:
+            data = await self.await_response(correlation_id=correlation_id, ttl=ttl)
+            data = data.decode('utf-8')
+            logger.debug(f'> send_rpc: response {data}')
+            return data
 
 
 class AbstractAsyncRpcClient(ABC):
