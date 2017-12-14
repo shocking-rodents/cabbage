@@ -34,7 +34,7 @@ class AbstractAsyncRpcServer(ABC):
 
 class AbstractAsyncRpcClient(ABC):
     @abstractmethod
-    async def send_rpc(self, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
+    async def send_rpc(self, exchange, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
         """Perform RPC call. If `response` is True, return result.
         If no response is received after `ttl` seconds, raise ServiceUnavailableError.
         """
@@ -171,7 +171,7 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
             await channel.basic_reject(delivery_tag=envelope.delivery_tag)
         else:
             responding = properties.reply_to is not None and response is not None
-            logger.debug(f'{"<" * responding} handle_rpc: result {response}, responding? {responding}, '
+            logger.debug(f'{"< " * responding}handle_rpc: result {response}, responding? {responding}, '
                          f'routing_key {properties.reply_to}, correlation_id {properties.correlation_id}')
             if responding:
                 response_params = dict(
@@ -200,13 +200,18 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
         finally:
             await self.connection.disconnect()
 
-    async def run(self, app):
+    async def run(self, app=None):
         """aiohttp-compatible on_startup coroutine. """
-        app['amqp_connection'] = self.connection
+        loop = None
+        if app:
+            app['amqp_connection'] = self.connection
+            loop = app.loop
+        if loop is None:
+            loop = asyncio.get_event_loop()
         await self.connect()
-        asyncio.ensure_future(self.main_loop(), loop=app.loop)
+        asyncio.ensure_future(self.main_loop(), loop=loop)
 
-    async def stop(self, app):
+    async def stop(self, app=None):
         """aiohttp-compatible on_cleanup coroutine. """
         self.keep_running = False
         await self.connection.disconnect()
