@@ -103,7 +103,6 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
         self.request_handler = request_handler
         self.loop = loop or asyncio.get_event_loop()
         self.prefetch_count = prefetch_count or 1
-        self.channel = None
         self.keep_running = True
         self.amqp_transport = None
         self.amqp_protocol = None
@@ -112,12 +111,12 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
 
     async def connect(self):
         await self.connection.connect()
-        self.channel = await self.connection.channel()
+        channel = await self.connection.channel()
 
         # setup client
-        result = await self.channel.queue_declare(exclusive=True)
+        result = await channel.queue_declare(exclusive=True)
         self.callback_queue = result['queue']
-        await self.channel.basic_consume(
+        await channel.basic_consume(
             self.on_response,
             queue_name=self.callback_queue,
         )
@@ -128,8 +127,9 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
         :param queue: AMQP queue name
         :param routing_key: AMQP routing key binding queue to exchange
         """
-        await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
-        result = await self.channel.queue_declare(
+        channel = await self.connection.channel()
+        await channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
+        result = await channel.queue_declare(
             queue_name=queue,
             arguments={
                 'x-dead-letter-exchange': 'DLX',
@@ -138,19 +138,20 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
             **queue_params
         )
         queue = result['queue']  # in case queue name is empty
-        await self.channel.queue_bind(queue_name=queue,
-                                      exchange_name=exchange,
-                                      routing_key=routing_key)
-        await self.channel.basic_qos(
+        await channel.queue_bind(queue_name=queue,
+                                 exchange_name=exchange,
+                                 routing_key=routing_key)
+        await channel.basic_qos(
             prefetch_count=self.prefetch_count,
             prefetch_size=0,
             connection_global=False,
         )
         logger.debug(f'listening on queue {queue}, bound to exchange {exchange} by {routing_key}')
-        await self.channel.basic_consume(
+        await channel.basic_consume(
             self.on_request,
             queue_name=queue,
         )
+        return channel
 
     async def on_request(self, channel, body, envelope, properties):
         """Run handle() in background. """
@@ -189,7 +190,8 @@ class AsyncAmqpRpc(AbstractAsyncRpcServer, AbstractAsyncRpcClient):
 
                 await channel.basic_publish(**response_params)
 
-            await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
+            if channel.is_open:
+                await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
 
     async def main_loop(self):
         """Main routine for the server. """
