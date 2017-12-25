@@ -78,7 +78,9 @@ class AmqpConnection:
                     password=self.password
                 )
             except Exception as e:
-                logger.info(f'connect. fail connect to {host}:{port}, error <{e.__class__.__name__}> {e}')
+                logger.info(f'connect. failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}. '
+                            f'retrying in 1 second')
+                await asyncio.sleep(1)
             else:
                 logger.info(f'connect. connected to {host}:{port}')
                 break
