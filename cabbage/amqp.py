@@ -41,18 +41,19 @@ class AbstractAsyncRpcClient(ABC):
 
 
 class AmqpConnection:
-    def __init__(self, hosts, username, password, loop=None):
+    def __init__(self, username, password, host, port, virtualhost='/', loop=None):
         """
         :param loop: asyncio event loop
-        :param hosts: list of hosts in host:port format, e.g. ["192.168.1.10:5672", "192.168.1.20:5672"]
         :param username: AMQP login
         :param password: AMQP password
+        :param host: server host
+        :param port: server port
+        :param virtualhost: AMQP virtual host
         """
         self.loop = loop or asyncio.get_event_loop()
-        self.hosts = hosts
         self.username = username
         self.password = password
-        self.connection_cycle = self.cycle_rabbit_host()
+        self.connection_cycle = cycle([(host, port, virtualhost)])
         self.transport = None
         self.protocol = None
 
@@ -61,6 +62,7 @@ class AmqpConnection:
             return await self.protocol.channel()
 
     def cycle_rabbit_host(self):
+        # TODO: add vhost support
         shuffle(self.hosts)
         for host_post in cycle(self.hosts):
             host, port = host_post.split(':')
@@ -69,12 +71,13 @@ class AmqpConnection:
 
     async def connect(self):
         delay = 1.0
-        for host, port in self.connection_cycle:
+        for host, port, virtualhost in self.connection_cycle:
             try:
                 self.transport, self.protocol = await aioamqp.connect(
                     loop=self.loop,
                     host=host,
                     port=port,
+                    virtualhost=virtualhost,
                     login=self.username,
                     password=self.password
                 )
