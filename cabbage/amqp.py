@@ -68,6 +68,7 @@ class AmqpConnection:
             yield host, port
 
     async def connect(self):
+        delay = 1.0
         for host, port in self.connection_cycle:
             try:
                 self.transport, self.protocol = await aioamqp.connect(
@@ -78,11 +79,12 @@ class AmqpConnection:
                     password=self.password
                 )
             except Exception as e:
-                logger.info(f'connect. failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}. '
-                            f'retrying in 1 second')
-                await asyncio.sleep(1)
+                logger.info(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
+                            f'retrying in {int(delay)} seconds')
+                await asyncio.sleep(int(delay))
+                delay = min(delay * 1.537, 60.0)
             else:
-                logger.info(f'connect. connected to {host}:{port}')
+                logger.info(f'connected to {host}:{port}')
                 break
 
     async def disconnect(self):
