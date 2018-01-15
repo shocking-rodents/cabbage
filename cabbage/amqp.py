@@ -76,13 +76,15 @@ class AmqpConnection:
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
                  request_handler: Union[Callable[[str], Optional[str]], Callable[[str], Awaitable[Optional[str]]]],
-                 prefetch_count=None, loop=None):
+                 listen_queues=None, prefetch_count=None, loop=None):
         """
         :param request_handler: request handler, function (def) or coroutine function (async def).
                                 It is to take a str and return either str or None, which means no response is required.
+        :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
         :param loop: asyncio event loop
         :param prefetch_count: per-consumer prefetch message limit, default 1
         """
+        self.listen_queues = listen_queues or []
         self.connection = connection
         self.request_handler = request_handler
         self.loop = loop or asyncio.get_event_loop()
@@ -106,7 +108,7 @@ class AsyncAmqpRpc:
         )
         logger.debug(f'listening on callback queue {result["queue"]}')
 
-    async def listen(self, exchange, queue, routing_key, **queue_params):
+    async def _listen(self, exchange, queue, routing_key, **queue_params):
         """
         :param exchange: topic exchange name to get or create
         :param queue: AMQP queue name
@@ -183,6 +185,8 @@ class AsyncAmqpRpc:
         try:
             while self.keep_running:
                 await self.connect()
+                for exchange, queue, routing_key, queue_params in self.listen_queues:
+                    await self._listen(exchange, queue, routing_key, **queue_params)
                 await self.connection.protocol.wait_closed()
         finally:
             await self.connection.disconnect()
