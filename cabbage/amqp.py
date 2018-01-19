@@ -87,7 +87,7 @@ class AsyncAmqpRpc:
         self.listen_queues = listen_queues or []
         self.connection = connection
         self.request_handler = request_handler
-        self.loop = loop or asyncio.get_event_loop()
+        self.loop = loop
         self.prefetch_count = prefetch_count or 1
         self.keep_running = True
         self.channel = None
@@ -145,7 +145,7 @@ class AsyncAmqpRpc:
 
     async def on_request(self, channel, body, envelope, properties):
         """Run handle() in background. """
-        self.loop.create_task(self.handle_rpc(channel, body, envelope, properties))
+        asyncio.ensure_future(self.handle_rpc(channel, body, envelope, properties))
 
     async def handle_rpc(self, channel, body, envelope, properties):
         """Process request with handler and send response if needed. """
