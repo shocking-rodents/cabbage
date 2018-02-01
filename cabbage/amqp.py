@@ -167,17 +167,13 @@ class AsyncAmqpRpc:
                          f'correlation_id {properties.correlation_id}, result {response}')
             if responding:
                 response_params = dict(
-                    payload=response,
+                    payload=response.encode('utf-8'),
                     exchange_name='',
-                    routing_key=properties.reply_to,
-                    properties={
-                        'content_type': 'application/json',
-                        'content_encoding': 'utf-8',
-                    },
+                    routing_key=properties.reply_to
                 )
 
                 if properties.correlation_id:
-                    response_params['properties']['correlation_id'] = properties.correlation_id
+                    response_params['properties'] = {'correlation_id': properties.correlation_id}
 
                 await channel.basic_publish(**response_params)
 
