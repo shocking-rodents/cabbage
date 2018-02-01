@@ -9,7 +9,7 @@ def read(filename):
 
 setup(
     name='cabbage',
-    version='0.1',
+    version='0.2',
     description='AMQP client and server for RPC.',
     packages=['cabbage'],
     install_requires=read('requirements.txt'),

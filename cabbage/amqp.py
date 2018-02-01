@@ -150,12 +150,13 @@ class AsyncAmqpRpc:
     async def handle_rpc(self, channel, body, envelope, properties):
         """Process request with handler and send response if needed. """
         try:
-            logger.debug(f'> handle_rpc: body {body}, routing_key {properties.reply_to}, '
+            data = body.decode('utf-8')
+            logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
             if inspect.iscoroutinefunction(self.request_handler):
-                response = await self.request_handler(body)
+                response = await self.request_handler(data)
             else:
-                response = self.request_handler(body)
+                response = self.request_handler(data)
         except Exception as e:
             logger.error(f'handle_rpc. error <{e.__class__.__name__}> {e}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
