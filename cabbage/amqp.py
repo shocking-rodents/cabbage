@@ -109,12 +109,14 @@ class AsyncAmqpRpc:
 
     async def listen(self, exchange, queue, routing_key, **queue_params):
         """
-        :param exchange: topic exchange name to get or create
+        :param exchange: exchange name to get or create (type topic if not default)
         :param queue: AMQP queue name
         :param routing_key: AMQP routing key binding queue to exchange
         :return: consumer_tag
         """
-        await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
+        if exchange != '':
+            # operation not permitted on default exchange
+            await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
         result = await self.channel.queue_declare(
             queue_name=queue,
             arguments={
@@ -124,10 +126,12 @@ class AsyncAmqpRpc:
             **queue_params
         )
         queue = result['queue']  # in case queue name is empty
-        await self.channel.queue_bind(
-            queue_name=queue,
-            exchange_name=exchange,
-            routing_key=routing_key)
+        if exchange != '':
+            # operation not permitted on default exchange
+            await self.channel.queue_bind(
+                queue_name=queue,
+                exchange_name=exchange,
+                routing_key=routing_key)
         await self.channel.basic_qos(
             prefetch_count=self.prefetch_count,
             prefetch_size=0,
