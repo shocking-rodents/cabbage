@@ -9,13 +9,13 @@ def read(filename):
 
 setup(
     name='cabbage',
-    version='0.2.2',
-    description='AMQP client and server for RPC.',
+    version='0.3',
+    description='asyncio-based AMQP client and server for RPC.',
     packages=['cabbage'],
     install_requires=read('requirements.txt'),
     long_description=read('README.md'),
     classifiers=[
-        'Development Status :: 3 - Alpha',
+        'Development Status :: 4 - Beta',
         'Programming Language :: Python :: 3.6',
         'Topic :: Utilities',
     ],

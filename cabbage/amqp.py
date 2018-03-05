@@ -75,12 +75,16 @@ class AmqpConnection:
 
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
-                 request_handler: Union[Callable[[str], Optional[str]], Callable[[str], Awaitable[Optional[str]]]],
-                 listen_queues=None, prefetch_count=None, loop=None):
+                 request_handler: Union[
+                     Callable[[Union[str, bytes]], Optional[Union[str, bytes]]],
+                     Callable[[Union[str, bytes]], Awaitable[Optional[Union[str, bytes]]]]
+                 ],
+                 listen_queues=None, prefetch_count=None, raw=False, loop=None):
         """
         :param request_handler: request handler, function (def) or coroutine function (async def).
                                 It is to take a str and return either str or None, which means no response is required.
         :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
+        :param raw: treat `request_handler` as `bytes -> bytes` function, not `str -> str`
         :param loop: asyncio event loop
         :param prefetch_count: per-consumer prefetch message limit, default 1
         """
@@ -89,6 +93,7 @@ class AsyncAmqpRpc:
         self.request_handler = request_handler
         self.loop = loop
         self.prefetch_count = prefetch_count or 1
+        self.raw = raw
         self.keep_running = True
         self.channel = None
         self.callback_queue = None
@@ -154,7 +159,7 @@ class AsyncAmqpRpc:
     async def handle_rpc(self, channel, body, envelope, properties):
         """Process request with handler and send response if needed. """
         try:
-            data = body.decode('utf-8')
+            data = body if self.raw else body.decode('utf-8')
             logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
             if inspect.iscoroutinefunction(self.request_handler):
@@ -171,7 +176,7 @@ class AsyncAmqpRpc:
                          f'correlation_id {properties.correlation_id}, result {response}')
             if responding:
                 response_params = dict(
-                    payload=response.encode('utf-8'),
+                    payload=response if self.raw else response.encode('utf-8'),
                     exchange_name='',
                     routing_key=properties.reply_to
                 )
