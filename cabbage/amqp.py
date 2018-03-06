@@ -10,7 +10,7 @@ import asyncio
 import aioamqp
 from aioamqp.protocol import CONNECTING, OPEN
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('cabbage')
 
 
 class ServiceUnavailableError(Exception):
@@ -18,19 +18,20 @@ class ServiceUnavailableError(Exception):
 
 
 class AmqpConnection:
-    def __init__(self, username, password, host, port, virtualhost='/', loop=None):
+    def __init__(self, host='localhost', port=5672, username='guest', password='guest', virtualhost='/', loop=None):
         """
         :param loop: asyncio event loop
-        :param username: AMQP login
-        :param password: AMQP password
         :param host: server host
         :param port: server port
+        :param username: AMQP login
+        :param password: AMQP password
         :param virtualhost: AMQP virtual host
         """
         self.loop = loop or asyncio.get_event_loop()
         self.username = username
         self.password = password
-        self.connection_cycle = cycle([(host, port, virtualhost)])
+        self.virtualhost = virtualhost
+        self.connection_cycle = cycle([(host, port)])
         self.transport = None
         self.protocol = None
 
@@ -39,7 +40,7 @@ class AmqpConnection:
             return await self.protocol.channel()
 
     def cycle_rabbit_host(self):
-        # TODO: add vhost support
+        # TODO: use cycling
         shuffle(self.hosts)
         for host_post in cycle(self.hosts):
             host, port = host_post.split(':')
@@ -48,20 +49,21 @@ class AmqpConnection:
 
     async def connect(self):
         delay = 1.0
-        for host, port, virtualhost in self.connection_cycle:
+        for host, port in self.connection_cycle:
             try:
                 self.transport, self.protocol = await aioamqp.connect(
                     loop=self.loop,
                     host=host,
                     port=port,
-                    virtualhost=virtualhost,
                     login=self.username,
-                    password=self.password
+                    password=self.password,
+                    virtualhost=self.virtualhost,
                 )
             except Exception as e:
                 logger.info(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
                             f'retrying in {int(delay)} seconds')
                 await asyncio.sleep(int(delay))
+                # exponentially increase delay up to 60 seconds:
                 delay = min(delay * 1.537, 60.0)
             else:
                 logger.info(f'connected to {host}:{port}')
@@ -79,19 +81,17 @@ class AsyncAmqpRpc:
                      Callable[[Union[str, bytes]], Optional[Union[str, bytes]]],
                      Callable[[Union[str, bytes]], Awaitable[Optional[Union[str, bytes]]]]
                  ],
-                 listen_queues=None, prefetch_count=None, raw=False, loop=None):
+                 listen_queues=None, prefetch_count=None, raw=False):
         """
         :param request_handler: request handler, function (def) or coroutine function (async def).
                                 It is to take a str and return either str or None, which means no response is required.
         :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
         :param raw: treat `request_handler` as `bytes -> bytes` function, not `str -> str`
-        :param loop: asyncio event loop
         :param prefetch_count: per-consumer prefetch message limit, default 1
         """
         self.listen_queues = listen_queues or []
         self.connection = connection
         self.request_handler = request_handler
-        self.loop = loop
         self.prefetch_count = prefetch_count or 1
         self.raw = raw
         self.keep_running = True
@@ -202,13 +202,7 @@ class AsyncAmqpRpc:
 
     async def run(self, app=None):
         """aiohttp-compatible on_startup coroutine. """
-        loop = None
-        if app:
-            app['amqp_connection'] = self.connection
-            loop = app.loop
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        asyncio.ensure_future(self.main_loop(), loop=loop)
+        asyncio.ensure_future(self.main_loop())
 
     async def stop(self, app=None):
         """aiohttp-compatible on_cleanup coroutine. """
