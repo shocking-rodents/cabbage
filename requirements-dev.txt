@@ -1,3 +1,4 @@
+wheel
 -r requirements.txt
 pre-commit==1.4.1
 pytest_asyncio==0.8.0
