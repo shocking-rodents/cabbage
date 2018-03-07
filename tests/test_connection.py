@@ -25,7 +25,22 @@ VIRTUALHOST = 'test_vhost'
 class TestConnect:
     """AmqpConnection.connect"""
 
+    async def test_default_params(self, event_loop):
+        """Check that AmqpConnection supplies reasonable defaults."""
+        connection = cabbage.AmqpConnection(loop=event_loop)
+        with patch('aioamqp.connect', new_callable=AwaitableMock) as mock_connect:
+            mock_transport = object()
+            mock_protocol = object()
+            mock_connect.return_value = (mock_transport, mock_protocol)
+            await connection.connect()
+
+        mock_connect.assert_called_once_with(
+            host='localhost', port=5672, login='guest', password='guest', virtualhost='/', loop=event_loop)
+        assert connection.transport is mock_transport
+        assert connection.protocol is mock_protocol
+
     async def test_connect(self, event_loop):
+        """Check typical connection call."""
         connection = cabbage.AmqpConnection(
             host=HOST, port=PORT, username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
         with patch('aioamqp.connect', new_callable=AwaitableMock) as mock_connect:

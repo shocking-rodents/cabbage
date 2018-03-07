@@ -1,0 +1,11 @@
+stages:
+- test
+
+all_branch_test:
+  stage: test
+  tags:
+  - alecto-core-test-docker
+  image: python:3.6
+  script:
+  - pip install -r requirements-dev.txt --no-cache-dir
+  - pytest --cov=cabbage tests/
