@@ -3,7 +3,7 @@ import inspect
 import uuid
 from itertools import cycle
 from random import shuffle
-from typing import Optional, Callable, Union, Awaitable
+from typing import Optional, Callable, Union, Awaitable, Mapping
 import logging
 import asyncio
 
@@ -20,12 +20,12 @@ class ServiceUnavailableError(Exception):
 class AmqpConnection:
     def __init__(self, host='localhost', port=5672, username='guest', password='guest', virtualhost='/', loop=None):
         """
-        :param loop: asyncio event loop
-        :param host: server host
-        :param port: server port
-        :param username: AMQP login
-        :param password: AMQP password
-        :param virtualhost: AMQP virtual host
+        :param host: server host, default localhost
+        :param port: server port, default 5672
+        :param username: AMQP login, default guest
+        :param password: AMQP password, default guest
+        :param virtualhost: AMQP virtual host, default /
+        :param loop: asyncio event loop, default current event loop
         """
         self.loop = loop or asyncio.get_event_loop()
         self.username = username
@@ -48,6 +48,12 @@ class AmqpConnection:
             yield host, port
 
     async def connect(self):
+        """Connect to AMQP broker. On failure this function will endlessly try reconnecting.
+        Do nothing if already connected or connecting.
+        """
+        if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
+            return
+
         delay = 1.0
         for host, port in self.connection_cycle:
             try:
@@ -63,7 +69,8 @@ class AmqpConnection:
                 logger.info(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
                             f'retrying in {int(delay)} seconds')
                 await asyncio.sleep(int(delay))
-                # exponentially increase delay up to 60 seconds:
+                # exponentially increase delay up to 60 seconds
+                # this looks like 1, 1, 2, 3, 5, 8, ...
                 delay = min(delay * 1.537, 60.0)
             else:
                 logger.info(f'connected to {host}:{port}')
@@ -78,15 +85,21 @@ class AmqpConnection:
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
                  request_handler: Union[
-                     Callable[[Union[str, bytes]], Optional[Union[str, bytes]]],
-                     Callable[[Union[str, bytes]], Awaitable[Optional[Union[str, bytes]]]]
-                 ],
+                     Callable[[str], Optional[str]],
+                     Callable[[bytes], Optional[bytes]],
+                     Callable[[str], Awaitable[Optional[str]]],
+                     Callable[[bytes], Awaitable[Optional[bytes]]],
+                     None
+                 ] = None,
                  listen_queues=None, prefetch_count=None, raw=False):
         """
-        :param request_handler: request handler, function (def) or coroutine function (async def).
-                                It is to take a str and return either str or None, which means no response is required.
+        All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
+
+        :param request_handler: request handler, can be a normal or coroutine function
+                that maps either str->str or bytes->bytes. If `request_handler` returns None,
+                it is taken to mean no response is needed.
         :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
-        :param raw: treat `request_handler` as `bytes -> bytes` function, not `str -> str`
+        :param raw: do not attempt decoding, use iff `request_handler` maps `bytes -> bytes`.
         :param prefetch_count: per-consumer prefetch message limit, default 1
         """
         self.listen_queues = listen_queues or []
@@ -112,25 +125,32 @@ class AsyncAmqpRpc:
         )
         logger.debug(f'listening on callback queue {result["queue"]}')
 
-    async def listen(self, exchange, queue, routing_key, **queue_params):
+    async def subscribe(self, queue: str, exchange: str = '', routing_key: str = None,
+                        exchange_params: Mapping = None, queue_params: Mapping = None):
         """
-        :param exchange: exchange name to get or create (type topic if not default)
-        :param queue: AMQP queue name
-        :param routing_key: AMQP routing key binding queue to exchange
+        Subscribe to a specific queue. Exchange and queue will be created if they do not exist.
+
+        :param exchange: exchange name, default '' (default AMQP exchange)
+        :param queue: queue name
+        :param routing_key: routing key, default same as `queue`
+        :param exchange_params: options for the exchange, default durable and type topic
+        :param queue_params: options for the queue, default durable and DLX
         :return: consumer_tag
         """
-        if exchange != '':
-            # operation not permitted on default exchange
-            await self.channel.exchange_declare(exchange_name=exchange, type_name='topic', durable=True)
-        result = await self.channel.queue_declare(
-            queue_name=queue,
-            arguments={
+        if routing_key is None:
+            routing_key = queue
+        if exchange_params is None:
+            exchange_params = dict(type_name='topic', durable=True)
+        if queue_params is None:
+            queue_params = dict(durable=True, arguments={
                 'x-dead-letter-exchange': 'DLX',
                 'x-dead-letter-routing-key': 'dlx_rpc',
-            },
-            **queue_params
-        )
-        queue = result['queue']  # in case queue name is empty
+            })
+        if exchange != '':
+            # operation not permitted on default exchange
+            await self.channel.exchange_declare(exchange_name=exchange, **exchange_params)
+        result = await self.channel.queue_declare(queue_name=queue, **queue_params)
+        queue = result['queue']  # in case queue name was generated by broker
         if exchange != '':
             # operation not permitted on default exchange
             await self.channel.queue_bind(
@@ -146,10 +166,15 @@ class AsyncAmqpRpc:
             self.on_request,
             queue_name=queue,
         )
-        logger.debug(f'listening on queue {queue}, bound to exchange {exchange} by {routing_key}')
+        logger.debug(f'subscribed to queue {queue}, bound to exchange {exchange} with key {routing_key}')
         return result['consumer_tag']
 
-    async def unlisten(self, consumer_tag):
+    async def unsubscribe(self, consumer_tag):
+        """
+        Stop consuming on a queue.
+
+        :param consumer_tag: consumer tag returned by `subscribe()`
+        """
         return await self.channel.basic_cancel(consumer_tag)
 
     async def on_request(self, channel, body, envelope, properties):
@@ -195,7 +220,7 @@ class AsyncAmqpRpc:
             while self.keep_running:
                 await self.connect()
                 for exchange, queue, routing_key, queue_params in self.listen_queues:
-                    await self.listen(exchange, queue, routing_key, **queue_params)
+                    await self.subscribe(exchange, queue, routing_key, **queue_params)
                 await self.connection.protocol.wait_closed()
         finally:
             await self.connection.disconnect()
@@ -220,7 +245,7 @@ class AsyncAmqpRpc:
             await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
 
     async def await_response(self, correlation_id, ttl):
-        """Wait for a response with given correlation id (blocking call). """
+        """Wait for a response with given correlation id. Blocks current Task. """
         self.responses[correlation_id] = asyncio.Future()
         try:
             await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
@@ -231,17 +256,15 @@ class AsyncAmqpRpc:
         finally:
             self.responses.pop(correlation_id)
 
-    async def send_rpc(self, exchange, destination, data: str, ttl: float, await_response=True,
-                       callback_queue=None) -> Optional[str]:
-        """Execute RPC on remote server.
-        If `await_response` is True, the call blocks until the result is returned.
-        `callback_queue` can be used to specify callback queue other than this RPC's exclusive queue.
+    async def send_rpc(self, exchange, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
+        """Execute a method on remote server.
+        If `await_response` is True, the call blocks current Task until the result is returned.
         """
         properties = dict()
         if await_response:
             correlation_id = str(uuid.uuid4())
             properties = {
-                'reply_to': callback_queue or self.callback_queue,
+                'reply_to': self.callback_queue,
                 'correlation_id': correlation_id,
             }
         logger.debug(f'< send_rpc: destination {destination}, data {data}, ttl {ttl}, properties {properties}')
