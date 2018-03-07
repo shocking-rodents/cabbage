@@ -7,6 +7,7 @@ pytestmark = pytest.mark.asyncio
 
 
 class TestSendRpc:
+    @pytest.mark.skip
     async def test_ok(self, event_loop):
         connection = cabbage.AmqpConnection(loop=event_loop)
         rpc = cabbage.AsyncAmqpRpc(connection=connection)
