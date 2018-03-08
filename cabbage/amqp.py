@@ -65,20 +65,24 @@ class AmqpConnection:
                     password=self.password,
                     virtualhost=self.virtualhost,
                 )
-            except Exception as e:
-                logger.info(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
-                            f'retrying in {int(delay)} seconds')
+            except OSError as e:
+                # Connection-related errors are mostly represented by `ConnectionError`,
+                # except for some like `socket.gaierror`, which fall into broader `OSError`
+                logger.warning(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
+                               f'retrying in {int(delay)} seconds')
                 await asyncio.sleep(int(delay))
                 # exponentially increase delay up to 60 seconds
                 # this looks like 1, 1, 2, 3, 5, 8, ...
                 delay = min(delay * 1.537, 60.0)
+            except Exception as e:
+                logger.error(f'connection failed, not retrying: <{e.__class__.__name__}> {e}')
+                raise
             else:
                 logger.info(f'connected to {host}:{port}')
                 break
 
     async def disconnect(self):
-        if (self.protocol is not None and
-                self.protocol.state in [CONNECTING, OPEN]):
+        if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             await self.protocol.close()
 
 
@@ -120,7 +124,7 @@ class AsyncAmqpRpc:
         result = await self.channel.queue_declare(exclusive=True)
         self.callback_queue = result['queue']
         await self.channel.basic_consume(
-            self.on_response,
+            callback=self.on_response,
             queue_name=self.callback_queue,
         )
         logger.debug(f'listening on callback queue {result["queue"]}')
@@ -163,7 +167,7 @@ class AsyncAmqpRpc:
             connection_global=False,
         )
         result = await self.channel.basic_consume(
-            self.on_request,
+            callback=self.on_request,
             queue_name=queue,
         )
         logger.debug(f'subscribed to queue {queue}, bound to exchange {exchange} with key {routing_key}')
