@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
+import asyncio
+
 import pytest
-from asynctest import patch, CoroutineMock
+from asynctest import patch
 
 import cabbage
 from tests.conftest import MockTransport, MockProtocol
 
 pytestmark = pytest.mark.asyncio
 
-
 # Sample non-default connection info:
-HOST = '192.168.0.10'
+HOST = 'fake_amqp_host'
 PORT = 25762
 USERNAME = 'amqp_user'
 PASSWORD = 'secret_password'
@@ -19,12 +20,25 @@ VIRTUALHOST = 'test_vhost'
 class TestConnect:
     """AmqpConnection.connect"""
 
+    async def test_connect(self, event_loop):
+        """Check typical connection call."""
+        mock_transport, mock_protocol = MockTransport(), MockProtocol()
+        connection = cabbage.AmqpConnection(
+            host=HOST, port=PORT, username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+        with patch('aioamqp.connect') as mock_connect:
+            mock_connect.return_value = (mock_transport, mock_protocol)
+            await connection.connect()
+
+        mock_connect.assert_called_once_with(
+            host=HOST, port=PORT, login=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+        assert connection.transport is mock_transport
+        assert connection.protocol is mock_protocol
+
     async def test_default_params(self, event_loop):
         """Check that AmqpConnection supplies reasonable defaults."""
         connection = cabbage.AmqpConnection(loop=event_loop)
-        with patch('aioamqp.connect', new_callable=CoroutineMock) as mock_connect:
-            mock_transport = MockTransport()
-            mock_protocol = MockProtocol()
+        mock_transport, mock_protocol = MockTransport(), MockProtocol()
+        with patch('aioamqp.connect') as mock_connect:
             mock_connect.return_value = (mock_transport, mock_protocol)
             await connection.connect()
 
@@ -33,17 +47,50 @@ class TestConnect:
         assert connection.transport is mock_transport
         assert connection.protocol is mock_protocol
 
-    async def test_connect(self, event_loop):
-        """Check typical connection call."""
-        connection = cabbage.AmqpConnection(
-            host=HOST, port=PORT, username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+    async def test_called_twice(self, event_loop):
+        """Check that calling the method twice has no effect."""
+        connection = cabbage.AmqpConnection(loop=event_loop)
+        mock_transport, mock_protocol = MockTransport(), MockProtocol()
+        connection.transport = mock_transport
+        connection.protocol = mock_protocol
         with patch('aioamqp.connect') as mock_connect:
-            mock_transport = MockTransport()
-            mock_protocol = MockProtocol()
-            mock_connect.return_value = (mock_transport, mock_protocol)
             await connection.connect()
 
-        mock_connect.assert_called_once_with(
-            host=HOST, port=PORT, login=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+        mock_connect.assert_not_called()
         assert connection.transport is mock_transport
         assert connection.protocol is mock_protocol
+
+    async def test_retry(self, event_loop):
+        """Keep reconnecting if an error occurs."""
+        attempts = 10
+
+        async def faulty_connect(_attempts=[attempts], **kwargs):
+            assert kwargs == dict(
+                host=HOST, port=PORT, login=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+            _attempts[0] -= 1
+            if _attempts[0]:
+                raise OSError('[Errno 113] Connect call failed')
+            return mock_transport, mock_protocol
+
+        connection = cabbage.AmqpConnection(
+            host=HOST, port=PORT, username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+        mock_transport, mock_protocol = MockTransport(), MockProtocol()
+
+        with patch('aioamqp.connect', new=faulty_connect), patch('asyncio.sleep') as mock_sleep:
+            await connection.connect()
+
+        assert mock_sleep.call_count == attempts - 1
+        assert connection.transport is mock_transport
+        assert connection.protocol is mock_protocol
+
+    async def test_fatal_error(self, event_loop):
+        """Some connection errors are not worth trying to recover from."""
+        connection = cabbage.AmqpConnection(host='angrydev.ru', port=80, loop=event_loop)
+
+        with pytest.raises(asyncio.streams.IncompleteReadError):
+            with patch('aioamqp.connect', side_effect=asyncio.streams.IncompleteReadError([], 160)) as mock_connect:
+                await connection.connect()
+
+        mock_connect.assert_called_once()
+        assert connection.transport is None
+        assert connection.protocol is None
