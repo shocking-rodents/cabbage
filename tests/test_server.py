@@ -6,7 +6,7 @@ from asynctest import patch
 
 import cabbage
 from tests.conftest import MockTransport, MockProtocol, SUBSCRIPTION_QUEUE, TEST_EXCHANGE, SUBSCRIPTION_KEY, \
-    RANDOM_QUEUE, HOST, MockEnvelope, MockProperties, TEST_DESTINATION
+    RANDOM_QUEUE, HOST, MockEnvelope, MockProperties, CONSUMER_TAG
 
 pytestmark = pytest.mark.asyncio
 
@@ -95,32 +95,38 @@ class TestSubscribe:
         rpc.channel.queue_bind.assert_not_called()
 
 
+class TestUnsubscribe:
+    """AsyncAmqpRpc.unsubscribe"""
+
+    async def test_ok(self, connection):
+        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
+        await rpc.connect()
+        await rpc.unsubscribe(consumer_tag=CONSUMER_TAG)
+        rpc.channel.basic_cancel.assert_called_once_with(consumer_tag=CONSUMER_TAG)
+
+
 class TestHandleRpc:
     """AsyncAmqpRpc.handle_rpc: low-level handler called by aioamqp"""
 
+    @staticmethod
+    def request_handler_factory(async, expected):
+        if async:
+            async def request_handler(request: str) -> str:
+                assert request == expected
+                return request
+        else:
+            def request_handler(request: str) -> str:
+                assert request == expected
+                return request
+        return request_handler
+
+    @pytest.mark.parametrize('is_async', [True, False])
     @pytest.mark.parametrize('body, expected', [
         (b'', ''),
         (b'Test message body. \xd0\xa2\xd0\xb5\xd1\x81\xd1\x82', 'Test message body. Тест'),
     ])
-    async def test_ok(self, connection, body, expected):
-        async def request_handler(request: str) -> str:
-            assert request == expected
-            return request
-
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=request_handler)
+    async def test_ok(self, connection, body, expected, is_async):
+        rpc = cabbage.AsyncAmqpRpc(connection=connection,
+                                   request_handler=self.request_handler_factory(is_async, expected))
         await rpc.connect()
         await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
-
-
-class TestSendRpc:
-    """AsyncAmqpRpc.send_rpc"""
-
-    @staticmethod
-    async def request_handler(request: str) -> str:
-        return request
-
-    @pytest.mark.parametrize('data', ['', 'Test message body. Тест'])
-    async def test_ok(self, connection, data):
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=self.request_handler)
-        await rpc.connect()
-        await rpc.send_rpc(destination=TEST_DESTINATION, data=data, await_response=False)

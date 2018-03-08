@@ -3,7 +3,7 @@ import inspect
 import uuid
 from itertools import cycle
 from random import shuffle
-from typing import Optional, Callable, Union, Awaitable, Mapping
+from typing import Optional, Callable, Union, Awaitable, Mapping, Dict
 import logging
 import asyncio
 
@@ -119,7 +119,7 @@ class AsyncAmqpRpc:
         self.keep_running = True
         self.channel = None
         self.callback_queue = None
-        self.responses = dict()
+        self.responses: Dict[str, asyncio.Future] = dict()
 
     async def connect(self):
         await self.connection.connect()
@@ -134,8 +134,10 @@ class AsyncAmqpRpc:
         )
         logger.debug(f'listening on callback queue {result["queue"]}')
 
+    # AMQP server implementation
+
     async def subscribe(self, queue: str, exchange: str = '', routing_key: str = None,
-                        exchange_params: Mapping = None, queue_params: Mapping = None):
+                        exchange_params: Mapping = None, queue_params: Mapping = None) -> str:
         """
         Subscribe to a specific queue. Exchange and queue will be created if they do not exist.
 
@@ -177,16 +179,18 @@ class AsyncAmqpRpc:
             callback=self.on_request,
             queue_name=queue,
         )
+        # TODO: save subscription target so that we can reconnect to it on lost connection
         logger.debug(f'subscribed to queue {queue}, bound to exchange {exchange} with key {routing_key}')
         return result['consumer_tag']
 
-    async def unsubscribe(self, consumer_tag):
+    async def unsubscribe(self, consumer_tag: str):
         """
         Stop consuming on a queue.
 
         :param consumer_tag: consumer tag returned by `subscribe()`
         """
-        return await self.channel.basic_cancel(consumer_tag)
+        logger.debug(f'unsubscribed from a queue (consumer tag {consumer_tag})')
+        await self.channel.basic_cancel(consumer_tag=consumer_tag)
 
     async def on_request(self, channel, body, envelope, properties):
         """Run handle() in background. """
@@ -194,8 +198,6 @@ class AsyncAmqpRpc:
 
     async def handle_rpc(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties):
         """Process request with handler and send response if needed. """
-        for e in [channel, body, envelope, properties]:
-            print(type(e), e)
         try:
             data = body if self.raw else body.decode('utf-8')
             logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
@@ -227,7 +229,7 @@ class AsyncAmqpRpc:
             if channel.is_open:
                 await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
 
-    async def main_loop(self):
+    async def run_server(self):
         """Main routine for the server. """
         try:
             while self.keep_running:
@@ -240,40 +242,21 @@ class AsyncAmqpRpc:
 
     async def run(self, app=None):
         """aiohttp-compatible on_startup coroutine. """
-        asyncio.ensure_future(self.main_loop())
+        asyncio.ensure_future(self.run_server())
 
     async def stop(self, app=None):
         """aiohttp-compatible on_cleanup coroutine. """
         self.keep_running = False
         await self.connection.disconnect()
 
-    async def on_response(self, channel, body, envelope, properties):
-        """Mark future as done. """
-        if properties.correlation_id in self.responses:
-            self.responses[properties.correlation_id].set_result(body)
-        else:
-            logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
-
-        if channel.is_open:
-            await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
-
-    async def await_response(self, correlation_id, ttl):
-        """Wait for a response with given correlation id. Blocks current Task. """
-        self.responses[correlation_id] = asyncio.Future()
-        try:
-            await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
-            return self.responses[correlation_id].result()
-        except asyncio.TimeoutError:
-            logger.warning(f'request {correlation_id} timed out')
-            raise ServiceUnavailableError('Request timed out') from None
-        finally:
-            self.responses.pop(correlation_id)
+    # AMQP client implementation
 
     async def send_rpc(self, destination: str, data: str, exchange: str = '', ttl: float = None,
                        await_response=True) -> Optional[str]:
         """Execute a method on remote server.
         If `await_response` is True, the call blocks current Task until the result is returned.
         """
+        # TODO: retry on error
         if ttl is None:
             ttl = self.default_ttl
         properties = dict()
@@ -296,3 +279,26 @@ class AsyncAmqpRpc:
             data = data.decode('utf-8')
             logger.debug(f'> send_rpc: response {data}')
             return data
+
+    async def await_response(self, correlation_id, ttl):
+        """Wait for a response with given correlation id. Blocks current Task. """
+        self.responses[correlation_id] = asyncio.Future()
+        try:
+            await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
+            return self.responses[correlation_id].result()
+        except asyncio.TimeoutError:
+            logger.warning(f'request {correlation_id} timed out')
+            raise ServiceUnavailableError('Request timed out') from None
+        finally:
+            self.responses.pop(correlation_id)
+
+    async def on_response(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties):
+        """Set response result. Called by aioamqp on a message in callback queue. """
+        if properties.correlation_id in self.responses:
+            self.responses[properties.correlation_id].set_result(body)
+            if channel.is_open:
+                await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
+        else:
+            logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
+            if channel.is_open:
+                await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
