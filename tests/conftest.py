@@ -17,6 +17,17 @@ def connection(event_loop):
     conn.protocol = MockProtocol()
     return conn
 
+# some non-default values to use in tests
+
+
+HOST = 'fake_amqp_host'
+TEST_EXCHANGE = 'rpc_exchange'
+TEST_DESTINATION = 'rpc_destination'
+SUBSCRIPTION_QUEUE = 'rpc_subscription_queue'
+RANDOM_QUEUE = 'amq.gen-random_queue_name'
+SUBSCRIPTION_KEY = 'rpc_subscription_key'
+
+
 # aioamqp classes mocked as factory functions:
 
 
@@ -34,7 +45,15 @@ def MockProtocol():
 def MockChannel():
     async def queue_declare(queue_name=None, passive=False, durable=False, exclusive=False,
                             auto_delete=False, no_wait=False, arguments=None):
-        return {'queue': queue_name or 'amq.gen-random_queue_name'}
+        return {'queue': queue_name or RANDOM_QUEUE}
     m = MagicMock(spec=aioamqp.channel.Channel, name='MockChannel')
     m.queue_declare.side_effect = queue_declare
     return m
+
+
+def MockEnvelope():
+    return MagicMock(spec=aioamqp.envelope.Envelope, name='MockEnvelope')
+
+
+def MockProperties():
+    return MagicMock(spec=aioamqp.properties.Properties, name='MockProperties')

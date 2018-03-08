@@ -8,6 +8,9 @@ import logging
 import asyncio
 
 import aioamqp
+from aioamqp.channel import Channel
+from aioamqp.envelope import Envelope
+from aioamqp.properties import Properties
 from aioamqp.protocol import CONNECTING, OPEN
 
 logger = logging.getLogger('cabbage')
@@ -95,7 +98,7 @@ class AsyncAmqpRpc:
                      Callable[[bytes], Awaitable[Optional[bytes]]],
                      None
                  ] = None,
-                 listen_queues=None, prefetch_count=None, raw=False):
+                 listen_queues=None, prefetch_count=1, raw=False, default_ttl=15.0):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
@@ -105,11 +108,13 @@ class AsyncAmqpRpc:
         :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
         :param raw: do not attempt decoding, use iff `request_handler` maps `bytes -> bytes`.
         :param prefetch_count: per-consumer prefetch message limit, default 1
+        :param default_ttl: default timeout for awaiting response when sending remote calls
         """
+        self.default_ttl = default_ttl
         self.listen_queues = listen_queues or []
         self.connection = connection
         self.request_handler = request_handler
-        self.prefetch_count = prefetch_count or 1
+        self.prefetch_count = prefetch_count
         self.raw = raw
         self.keep_running = True
         self.channel = None
@@ -141,6 +146,8 @@ class AsyncAmqpRpc:
         :param queue_params: options for the queue, default durable and DLX
         :return: consumer_tag
         """
+        if self.request_handler is None:
+            raise ValueError('Request handler is not set')
         if routing_key is None:
             routing_key = queue
         if exchange_params is None:
@@ -185,8 +192,10 @@ class AsyncAmqpRpc:
         """Run handle() in background. """
         asyncio.ensure_future(self.handle_rpc(channel, body, envelope, properties))
 
-    async def handle_rpc(self, channel, body, envelope, properties):
+    async def handle_rpc(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties):
         """Process request with handler and send response if needed. """
+        for e in [channel, body, envelope, properties]:
+            print(type(e), e)
         try:
             data = body if self.raw else body.decode('utf-8')
             logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
@@ -260,10 +269,13 @@ class AsyncAmqpRpc:
         finally:
             self.responses.pop(correlation_id)
 
-    async def send_rpc(self, exchange, destination, data: str, ttl: float, await_response=True) -> Optional[str]:
+    async def send_rpc(self, destination: str, data: str, exchange: str = '', ttl: float = None,
+                       await_response=True) -> Optional[str]:
         """Execute a method on remote server.
         If `await_response` is True, the call blocks current Task until the result is returned.
         """
+        if ttl is None:
+            ttl = self.default_ttl
         properties = dict()
         if await_response:
             correlation_id = str(uuid.uuid4())
