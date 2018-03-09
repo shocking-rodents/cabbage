@@ -2,7 +2,7 @@
 import inspect
 import uuid
 from itertools import cycle
-from random import shuffle
+import random
 from typing import Optional, Callable, Union, Awaitable, Mapping, Dict
 import logging
 import asyncio
@@ -34,7 +34,8 @@ class AmqpConnection:
         self.username = username
         self.password = password
         self.virtualhost = virtualhost
-        self.connection_cycle = cycle([(host, port)])
+        self.hosts = [(host, port)]
+        self.connection_cycle = self.cycle_hosts()
         self.transport = None
         self.protocol = None
 
@@ -42,13 +43,10 @@ class AmqpConnection:
         if self.protocol is not None:
             return await self.protocol.channel()
 
-    def cycle_rabbit_host(self):
-        # TODO: use cycling
-        shuffle(self.hosts)
-        for host_post in cycle(self.hosts):
-            host, port = host_post.split(':')
-            port = int(port)
-            yield host, port
+    def cycle_hosts(self, shuffle=False):
+        if shuffle:
+            random.shuffle(self.hosts)
+        yield from cycle(self.hosts)
 
     async def connect(self):
         """Connect to AMQP broker. On failure this function will endlessly try reconnecting.
@@ -202,14 +200,13 @@ class AsyncAmqpRpc:
             data = body if self.raw else body.decode('utf-8')
             logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
-            if inspect.iscoroutinefunction(self.request_handler):
-                response = await self.request_handler(data)
-            else:
-                response = self.request_handler(data)
+            response = self.request_handler(data)
+            if inspect.iscoroutine(response):
+                response = await response
         except Exception as e:
             logger.error(f'handle_rpc. error <{e.__class__.__name__}> {e}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
-            await channel.basic_reject(delivery_tag=envelope.delivery_tag)
+            await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
         else:
             responding = properties.reply_to is not None and response is not None
             logger.debug(f'{"< " * responding}handle_rpc: responding? {responding}, routing_key {properties.reply_to}, '
@@ -251,14 +248,20 @@ class AsyncAmqpRpc:
 
     # AMQP client implementation
 
-    async def send_rpc(self, destination: str, data: str, exchange: str = '', ttl: float = None,
-                       await_response=True) -> Optional[str]:
+    async def send_rpc(self, destination: str, data: Union[str, bytes], exchange: str = '', ttl: float = None,
+                       await_response=True) -> Union[str, bytes, None]:
         """Execute a method on remote server.
         If `await_response` is True, the call blocks current Task until the result is returned.
         """
         # TODO: retry on error
         if ttl is None:
             ttl = self.default_ttl
+        if isinstance(data, str):
+            payload = data.encode('utf-8')
+            raw = False
+        else:
+            payload = data
+            raw = True
         properties = dict()
         if await_response:
             correlation_id = str(uuid.uuid4())
@@ -271,14 +274,15 @@ class AsyncAmqpRpc:
             exchange_name=exchange,
             routing_key=destination,
             properties=properties,
-            payload=data.encode('utf-8'),
+            payload=payload,
         )
 
         if await_response:
-            data = await self.await_response(correlation_id=correlation_id, ttl=ttl)
-            data = data.decode('utf-8')
-            logger.debug(f'> send_rpc: response {data}')
-            return data
+            response = await self.await_response(correlation_id=correlation_id, ttl=ttl)
+            if not raw:
+                response = response.decode('utf-8')
+            logger.debug(f'> send_rpc: response {response}')
+            return response
 
     async def await_response(self, correlation_id, ttl):
         """Wait for a response with given correlation id. Blocks current Task. """
