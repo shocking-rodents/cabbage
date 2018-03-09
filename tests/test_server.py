@@ -2,11 +2,11 @@
 import aioamqp
 
 import pytest
-from asynctest import patch
+from asynctest import patch, MagicMock
 
 import cabbage
 from tests.conftest import MockTransport, MockProtocol, SUBSCRIPTION_QUEUE, TEST_EXCHANGE, SUBSCRIPTION_KEY, \
-    RANDOM_QUEUE, HOST, MockEnvelope, MockProperties, CONSUMER_TAG
+    RANDOM_QUEUE, HOST, MockEnvelope, MockProperties, CONSUMER_TAG, DELIVERY_TAG
 
 pytestmark = pytest.mark.asyncio
 
@@ -109,16 +109,17 @@ class TestHandleRpc:
     """AsyncAmqpRpc.handle_rpc: low-level handler called by aioamqp"""
 
     @staticmethod
-    def request_handler_factory(async, expected):
+    def request_handler_factory(async, fail=False):
+        """Mocks  """
+        if fail:
+            return MagicMock(side_effect=Exception('Handler error'))
         if async:
-            async def request_handler(request: str) -> str:
-                assert request == expected
+            async def request_handler(request):
                 return request
         else:
-            def request_handler(request: str) -> str:
-                assert request == expected
+            def request_handler(request):
                 return request
-        return request_handler
+        return MagicMock(side_effect=request_handler)
 
     @pytest.mark.parametrize('is_async', [True, False])
     @pytest.mark.parametrize('body, expected', [
@@ -126,7 +127,24 @@ class TestHandleRpc:
         (b'Test message body. \xd0\xa2\xd0\xb5\xd1\x81\xd1\x82', 'Test message body. Тест'),
     ])
     async def test_ok(self, connection, body, expected, is_async):
-        rpc = cabbage.AsyncAmqpRpc(connection=connection,
-                                   request_handler=self.request_handler_factory(is_async, expected))
+        handler = self.request_handler_factory(is_async, fail=False)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=handler)
         await rpc.connect()
         await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
+        handler.assert_called_once_with(expected)
+        rpc.channel.basic_client_ack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
+        rpc.channel.basic_client_nack.assert_not_called()
+
+    @pytest.mark.parametrize('is_async', [True, False])
+    @pytest.mark.parametrize('body, expected', [
+        (b'', ''),
+        (b'Test message body. \xd0\xa2\xd0\xb5\xd1\x81\xd1\x82', 'Test message body. Тест'),
+    ])
+    async def test_exception(self, connection, body, expected, is_async):
+        handler = self.request_handler_factory(is_async, fail=True)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=handler)
+        await rpc.connect()
+        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
+        handler.assert_called_once_with(expected)
+        rpc.channel.basic_client_nack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
+        rpc.channel.basic_client_ack.assert_not_called()

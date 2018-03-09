@@ -2,7 +2,8 @@
 import asyncio
 
 import pytest
-from asynctest import patch
+from aioamqp.protocol import CLOSED
+from asynctest import patch, MagicMock
 
 import cabbage
 from tests.conftest import MockTransport, MockProtocol
@@ -94,3 +95,20 @@ class TestConnect:
         mock_connect.assert_called_once()
         assert connection.transport is None
         assert connection.protocol is None
+
+
+class TestDisconnect:
+    async def test_ok(self, connection):
+        await connection.disconnect()
+        connection.protocol.close.assert_called_once_with()
+
+    async def test_no_protocol(self, event_loop):
+        connection = cabbage.AmqpConnection(loop=event_loop)
+        connection.protocol = MagicMock()
+        await connection.disconnect()
+        connection.protocol.close.assert_not_called()
+
+    async def test_not_connected(self, connection):
+        connection.protocol.state = CLOSED
+        await connection.disconnect()
+        connection.protocol.close.assert_not_called()
