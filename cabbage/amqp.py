@@ -232,7 +232,7 @@ class AsyncAmqpRpc:
             while self.keep_running:
                 await self.connect()
                 for exchange, queue, routing_key, queue_params in self.listen_queues:
-                    await self.subscribe(exchange, queue, routing_key, **queue_params)
+                    await self.subscribe(queue, exchange, routing_key, queue_params=queue_params)
                 await self.connection.protocol.wait_closed()
         finally:
             await self.connection.disconnect()
