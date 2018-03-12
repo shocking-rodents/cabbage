@@ -55,7 +55,7 @@ class AmqpConnection:
         if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             return
 
-        delay = 1.0
+        delay = 0.75
         for host, port in self.connection_cycle:
             try:
                 self.transport, self.protocol = await aioamqp.connect(
@@ -72,9 +72,9 @@ class AmqpConnection:
                 logger.warning(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
                                f'retrying in {int(delay)} seconds')
                 await asyncio.sleep(int(delay))
-                # exponentially increase delay up to 60 seconds
-                # this looks like 1, 1, 2, 3, 5, 8, ...
-                delay = min(delay * 1.537, 60.0)
+                # fibonacci-like increase in delay up to 60 seconds
+                # this looks like 1s, 1s, 2s, 3s, 5s, 8s, ..., 60s, 60s, ...
+                delay = min(delay * 1.61, 60.0)
             except Exception as e:
                 logger.error(f'connection failed, not retrying: <{e.__class__.__name__}> {e}')
                 raise
@@ -201,7 +201,7 @@ class AsyncAmqpRpc:
             logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
             response = self.request_handler(data)
-            if inspect.iscoroutine(response):
+            if inspect.isawaitable(response):
                 response = await response
         except Exception as e:
             logger.error(f'handle_rpc. error <{e.__class__.__name__}> {e}, routing_key {properties.reply_to}, '
