@@ -13,7 +13,7 @@ async def test_sanity(management):
     await rpc.connect()
     assert management.get_queue('/', 'my_crappy_queue_that_should_not_exist') == {
         'error': 'Object Not Found',
-        'reason': '"Not Found"\n'
+        'reason': 'Not Found'
     }
 
 
@@ -24,7 +24,7 @@ async def test_sanity(management):
 async def test_subscribe(request, rpc, management, exchange, queue):
     assert management.get_queue(request.node.name, queue) == {
         'error': 'Object Not Found',
-        'reason': '"Not Found"\n'
+        'reason': 'Not Found'
     }
     await rpc.subscribe(exchange=exchange, queue=queue)
     assert management.get_queue(request.node.name, queue).get('name') == queue
