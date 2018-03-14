@@ -7,6 +7,6 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_ok():
-    connection = AmqpConnection()
+    connection = AmqpConnection(host='rabbitmq', port=5672)
     rpc = AsyncAmqpRpc(connection=connection)
     await rpc.connect()
