@@ -32,6 +32,9 @@ class Management:
         requests.delete(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.kwargs)
 
 
+TEST_VHOST = 'cabbage_test'
+
+
 @pytest.fixture(scope='session')
 def management():
     """Wrapper for RabbitMQ Management Plugin API."""
@@ -39,16 +42,16 @@ def management():
 
 
 @pytest.yield_fixture(scope='function', autouse=True)
-def vhost_environment(request, management):
-    management.put_vhost(request.node.name)
+def vhost_environment(management):
+    management.put_vhost(TEST_VHOST)
     yield
-    management.delete_vhost(request.node.name)
+    management.delete_vhost(TEST_VHOST)
 
 
 @pytest.fixture
-async def rpc(request, event_loop):
+async def rpc(event_loop):
     """Ready-to-work RPC connected to RabbitMQ in Docker."""
-    connection = AmqpConnection(host='rabbitmq', port=5672, virtualhost=request.node.name, loop=event_loop)
+    connection = AmqpConnection(host='rabbitmq', port=5672, virtualhost=TEST_VHOST, loop=event_loop)
     rpc = AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
     await rpc.connect()
     return rpc
