@@ -15,7 +15,7 @@ class TestConnect:
     """AsyncAmqpRpc.connect"""
 
     async def test_ok(self, event_loop):
-        connection = cabbage.AmqpConnection(host=HOST, loop=event_loop)
+        connection = cabbage.AmqpConnection(hosts=[(HOST, 5672)], loop=event_loop)
         rpc = cabbage.AsyncAmqpRpc(connection=connection)
         with patch('aioamqp.connect') as mock_connect:
             mock_connect.return_value = (MockTransport(), MockProtocol())

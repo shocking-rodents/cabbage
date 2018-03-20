@@ -21,10 +21,9 @@ class ServiceUnavailableError(Exception):
 
 
 class AmqpConnection:
-    def __init__(self, host='localhost', port=5672, username='guest', password='guest', virtualhost='/', loop=None):
+    def __init__(self, hosts=None, username='guest', password='guest', virtualhost='/', loop=None):
         """
-        :param host: server host, default localhost
-        :param port: server port, default 5672
+        :param hosts: iterable with tuples (host, port), default localhost:5672
         :param username: AMQP login, default guest
         :param password: AMQP password, default guest
         :param virtualhost: AMQP virtual host, default /
@@ -34,7 +33,7 @@ class AmqpConnection:
         self.username = username
         self.password = password
         self.virtualhost = virtualhost
-        self.hosts = [(host, port)]
+        self.hosts = hosts if hosts is not None else [('localhost', 5672)]
         self.connection_cycle = self.cycle_hosts()
         self.transport = None
         self.protocol = None
