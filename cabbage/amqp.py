@@ -13,6 +13,8 @@ from aioamqp.envelope import Envelope
 from aioamqp.properties import Properties
 from aioamqp.protocol import CONNECTING, OPEN
 
+from .utils import FibonaccianBackoff
+
 logger = logging.getLogger('cabbage')
 
 
@@ -54,7 +56,7 @@ class AmqpConnection:
         if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             return
 
-        delay = 0.75
+        delay = FibonaccianBackoff(limit=60.0)
         for host, port in self.connection_cycle:
             try:
                 self.transport, self.protocol = await aioamqp.connect(
@@ -68,12 +70,10 @@ class AmqpConnection:
             except OSError as e:
                 # Connection-related errors are mostly represented by `ConnectionError`,
                 # except for some like `socket.gaierror`, which fall into broader `OSError`
+                next_delay = delay.next()
                 logger.warning(f'failed to connect to {host}:{port}, error <{e.__class__.__name__}> {e}, '
-                               f'retrying in {int(delay)} seconds')
-                await asyncio.sleep(int(delay))
-                # fibonacci-like increase in delay up to 60 seconds
-                # this looks like 1s, 1s, 2s, 3s, 5s, 8s, ..., 60s, 60s, ...
-                delay = min(delay * 1.61, 60.0)
+                               f'retrying in {next_delay} seconds')
+                await asyncio.sleep(next_delay)
             except Exception as e:
                 logger.error(f'connection failed, not retrying: <{e.__class__.__name__}> {e}')
                 raise
