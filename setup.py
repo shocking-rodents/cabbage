@@ -2,6 +2,8 @@
 import os
 from setuptools import setup
 
+import cabbage
+
 
 def read(filename):
     return open(os.path.join(os.path.dirname(__file__), filename)).read()
@@ -9,7 +11,7 @@ def read(filename):
 
 setup(
     name='cabbage',
-    version='0.5',
+    version=cabbage.__version__,
     description='asyncio-based AMQP client and server for RPC.',
     packages=['cabbage'],
     install_requires=read('requirements.txt'),
