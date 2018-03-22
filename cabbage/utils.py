@@ -16,7 +16,13 @@ class ExponentialBackoff:
         self.factor = factor
         self.limit = limit
 
-    def next(self):
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.next()
+
+    def next(self) -> int:
         try:
             return round(self.current)
         finally:
@@ -31,4 +37,4 @@ class FibonaccianBackoff(ExponentialBackoff):
     """
 
     def __init__(self, limit):
-        super().__init__(start=0.725, factor=1.618, limit=limit)
+        super().__init__(start=0.724, factor=1.618, limit=limit)
