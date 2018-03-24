@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
+from functools import partial
 from urllib.parse import quote
 
 import pytest
@@ -12,24 +13,38 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(n
 
 
 class Management:
-    def __init__(self, url):
-        self.base_url = url
-        self.kwargs = dict(
+    def __init__(self, url, vhost):
+        self.base_url = f'{url}/api/'
+        self.vhost = vhost
+        self.request_params = dict(
             auth=HTTPBasicAuth('guest', 'guest'),
             headers={'content-type': 'application/json'},
         )
 
-    def get_queue(self, vhost, name):
-        return requests.get(f'{self.base_url}/api/queues/{quote(vhost, safe="")}/{quote(name, safe="")}',
-                            **self.kwargs).json()
+    def _call(self, http_method, *args, **kwargs):
+        args = map(partial(quote, safe=''), args)
+        result = requests.request(http_method,
+                                  self.base_url + '/'.join(args),
+                                  **{**self.request_params, **kwargs})
+        if result.text:
+            return result.json()
 
-    def put_vhost(self, vhost):
-        requests.put(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.kwargs)
-        requests.put(f'{self.base_url}/api/permissions/{quote(vhost, safe="")}/guest',
-                     json={'configure': '.*', 'write': '.*', 'read': '.*'}, **self.kwargs)
+    def get_queue(self, name):
+        return self._call('get', 'queues', self.vhost, name)
 
-    def delete_vhost(self, vhost):
-        requests.delete(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.kwargs)
+    def get_consumers(self):
+        return self._call('get', 'consumers', self.vhost)
+
+    def put_vhost(self):
+        # requests.put(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.request_params).json()
+        self._call('put', 'vhosts', self.vhost)
+        self._call('put', 'permissions', self.vhost, 'guest', json={'configure': '.*', 'write': '.*', 'read': '.*'})
+        # requests.put(f'{self.base_url}/api/permissions/{quote(vhost, safe="")}/guest',
+        #              json={'configure': '.*', 'write': '.*', 'read': '.*'}, **self.kwargs)
+
+    def delete_vhost(self):
+        self._call('delete', 'vhosts', self.vhost)
+        # requests.delete(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.kwargs)
 
 
 TEST_VHOST = 'cabbage_test'
@@ -38,20 +53,20 @@ TEST_VHOST = 'cabbage_test'
 @pytest.fixture(scope='session')
 def management():
     """Wrapper for RabbitMQ Management Plugin API."""
-    return Management('http://rabbitmq:15672')
+    return Management('http://rabbitmq:15672', vhost=TEST_VHOST)
 
 
 @pytest.yield_fixture(scope='function', autouse=True)
-def vhost_environment(management):
-    management.put_vhost(TEST_VHOST)
+def vhost_environment(management: Management):
+    management.put_vhost()
     yield
-    management.delete_vhost(TEST_VHOST)
+    management.delete_vhost()
 
 
 @pytest.fixture
 async def rpc(event_loop):
     """Ready-to-work RPC connected to RabbitMQ in Docker."""
-    connection = AmqpConnection(host='rabbitmq', port=5672, virtualhost=TEST_VHOST, loop=event_loop)
+    connection = AmqpConnection(hosts=[('rabbitmq', 5672)], virtualhost=TEST_VHOST, loop=event_loop)
     rpc = AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
     await rpc.connect()
     return rpc
