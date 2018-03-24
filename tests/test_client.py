@@ -53,24 +53,24 @@ class TestAwaitResponse:
         # schedule awaiting response in another Task
         task = asyncio.ensure_future(rpc.await_response(correlation_id=RESPONSE_CORR_ID, ttl=10.0))
         # but it's not executing yet
-        assert set(rpc.responses.keys()) == set()
+        assert set(rpc._responses.keys()) == set()
         # let it run for a bit
         await asyncio.sleep(0)
         # check that it created a Future
-        assert set(rpc.responses.keys()) == {RESPONSE_CORR_ID}
+        assert set(rpc._responses.keys()) == {RESPONSE_CORR_ID}
         # set Future result
-        rpc.responses[RESPONSE_CORR_ID].set_result('task result')
+        rpc._responses[RESPONSE_CORR_ID].set_result('task result')
         # let the Task run to completion
         await task
         assert task.done()
         assert task.result() == 'task result'
-        # check that it cleaned up rpc.responses
-        assert set(rpc.responses.keys()) == set()
+        # check that it cleaned up rpc._responses
+        assert set(rpc._responses.keys()) == set()
 
     async def test_timeout(self, rpc):
         with pytest.raises(cabbage.ServiceUnavailableError):
             await rpc.await_response(correlation_id=RESPONSE_CORR_ID, ttl=0)
-        assert set(rpc.responses.keys()) == set()
+        assert set(rpc._responses.keys()) == set()
 
 
 class TestOnResponse:
@@ -78,10 +78,10 @@ class TestOnResponse:
 
     @pytest.mark.parametrize('body', [b'', b'Test message body. \xd0\xa2\xd0\xb5\xd1\x81\xd1\x82'])
     async def test_ok(self, rpc, body):
-        rpc.responses[RESPONSE_CORR_ID] = asyncio.Future()
+        rpc._responses[RESPONSE_CORR_ID] = asyncio.Future()
         await rpc.on_response(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
-        assert rpc.responses[RESPONSE_CORR_ID].done()
-        assert rpc.responses[RESPONSE_CORR_ID].result() == body
+        assert rpc._responses[RESPONSE_CORR_ID].done()
+        assert rpc._responses[RESPONSE_CORR_ID].result() == body
         rpc.channel.basic_client_ack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
         rpc.channel.basic_client_nack.assert_not_called()
 
