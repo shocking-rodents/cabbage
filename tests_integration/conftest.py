@@ -36,15 +36,15 @@ class Management:
         return self._call('get', 'consumers', self.vhost)
 
     def put_vhost(self):
-        # requests.put(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.request_params).json()
         self._call('put', 'vhosts', self.vhost)
         self._call('put', 'permissions', self.vhost, 'guest', json={'configure': '.*', 'write': '.*', 'read': '.*'})
-        # requests.put(f'{self.base_url}/api/permissions/{quote(vhost, safe="")}/guest',
-        #              json={'configure': '.*', 'write': '.*', 'read': '.*'}, **self.kwargs)
 
     def delete_vhost(self):
         self._call('delete', 'vhosts', self.vhost)
-        # requests.delete(f'{self.base_url}/api/vhosts/{quote(vhost, safe="")}', **self.kwargs)
+
+    def publish(self, exchange, routing_key, data):
+        self._call('post', 'exchanges', self.vhost, exchange, 'publish',
+                   json={'properties': {}, 'routing_key': routing_key, 'payload': data, 'payload_encoding': 'string'})
 
 
 TEST_VHOST = 'cabbage_test'
@@ -69,4 +69,5 @@ async def rpc(event_loop):
     connection = AmqpConnection(hosts=[('rabbitmq', 5672)], virtualhost=TEST_VHOST, loop=event_loop)
     rpc = AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
     await rpc.connect()
-    return rpc
+    yield rpc
+    await rpc.stop()

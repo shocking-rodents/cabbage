@@ -3,7 +3,7 @@ import inspect
 import uuid
 from itertools import cycle
 import random
-from typing import Optional, Callable, Union, Awaitable, Mapping, Dict
+from typing import Optional, Callable, Union, Awaitable, Mapping, Dict  # noQA
 import logging
 import asyncio
 
@@ -116,7 +116,7 @@ class AsyncAmqpRpc:
         self.keep_running = True
         self.channel = None
         self.callback_queue = None
-        self.responses: Dict[str, asyncio.Future] = dict()
+        self._responses = {}  # type: Dict[str, asyncio.Future]
 
     async def connect(self):
         await self.connection.connect()
@@ -285,20 +285,20 @@ class AsyncAmqpRpc:
 
     async def await_response(self, correlation_id, ttl):
         """Wait for a response with given correlation id. Blocks current Task. """
-        self.responses[correlation_id] = asyncio.Future()
+        self._responses[correlation_id] = asyncio.Future()
         try:
-            await asyncio.wait_for(self.responses[correlation_id], timeout=ttl)
-            return self.responses[correlation_id].result()
+            await asyncio.wait_for(self._responses[correlation_id], timeout=ttl)
+            return self._responses[correlation_id].result()
         except asyncio.TimeoutError:
             logger.warning(f'request {correlation_id} timed out')
             raise ServiceUnavailableError('Request timed out') from None
         finally:
-            self.responses.pop(correlation_id)
+            self._responses.pop(correlation_id)
 
     async def on_response(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties):
         """Set response result. Called by aioamqp on a message in callback queue. """
-        if properties.correlation_id in self.responses:
-            self.responses[properties.correlation_id].set_result(body)
+        if properties.correlation_id in self._responses:
+            self._responses[properties.correlation_id].set_result(body)
             if channel.is_open:
                 await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
         else:
