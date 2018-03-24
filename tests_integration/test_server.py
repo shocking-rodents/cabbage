@@ -20,6 +20,7 @@ async def test_sanity(management):
 ])
 async def test_subscribe(rpc, management, exchange, queue):
     assert management.get_queue(queue).get('error') == 'Object Not Found'
+    print(management.get_consumers())
     assert len(management.get_consumers()) == 1  # callback queue
     await rpc.subscribe(exchange=exchange, queue=queue)
     assert management.get_queue(queue).get('name') == queue
