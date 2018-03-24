@@ -25,7 +25,7 @@ class TestConnect:
         """Check typical connection call."""
         mock_transport, mock_protocol = MockTransport(), MockProtocol()
         connection = cabbage.AmqpConnection(
-            host=HOST, port=PORT, username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+            hosts=[(HOST, PORT)], username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
         with patch('aioamqp.connect') as mock_connect:
             mock_connect.return_value = (mock_transport, mock_protocol)
             await connection.connect()
@@ -74,7 +74,7 @@ class TestConnect:
             return mock_transport, mock_protocol
 
         connection = cabbage.AmqpConnection(
-            host=HOST, port=PORT, username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
+            hosts=[(HOST, PORT)], username=USERNAME, password=PASSWORD, virtualhost=VIRTUALHOST, loop=event_loop)
         mock_transport, mock_protocol = MockTransport(), MockProtocol()
 
         with patch('aioamqp.connect', new=faulty_connect), patch('asyncio.sleep') as mock_sleep:
@@ -86,7 +86,7 @@ class TestConnect:
 
     async def test_fatal_error(self, event_loop):
         """Some connection errors are not worth trying to recover from."""
-        connection = cabbage.AmqpConnection(host='angrydev.ru', port=80, loop=event_loop)
+        connection = cabbage.AmqpConnection(hosts=[('angrydev.ru', 80)], loop=event_loop)
 
         with pytest.raises(asyncio.streams.IncompleteReadError):
             with patch('aioamqp.connect', side_effect=asyncio.streams.IncompleteReadError([], 160)) as mock_connect:

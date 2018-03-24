@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(n
 
 @pytest.fixture
 def connection(event_loop):
-    conn = cabbage.AmqpConnection(host=HOST, loop=event_loop)
+    conn = cabbage.AmqpConnection(hosts=[(HOST, 5672)], loop=event_loop)
     conn.transport = MockTransport()
     conn.protocol = MockProtocol()
     return conn
