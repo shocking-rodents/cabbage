@@ -6,14 +6,13 @@ from asynctest import MagicMock
 import aioamqp
 
 import cabbage
-from cabbage import AmqpConnection
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
 
 @pytest.fixture
 def connection(event_loop):
-    conn = AmqpConnection(hosts=[(HOST, 5672)], loop=event_loop)
+    conn = cabbage.AmqpConnection(hosts=[(HOST, 5672)], loop=event_loop)
     conn.transport = MockTransport()
     conn.protocol = MockProtocol()
     return conn
@@ -68,4 +67,5 @@ def MockEnvelope():
 def MockProperties():
     m = MagicMock(spec=aioamqp.properties.Properties, name='MockProperties')
     m.correlation_id = RESPONSE_CORR_ID
+    m.reply_to = RANDOM_QUEUE
     return m
