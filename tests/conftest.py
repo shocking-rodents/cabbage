@@ -67,4 +67,5 @@ def MockEnvelope():
 def MockProperties():
     m = MagicMock(spec=aioamqp.properties.Properties, name='MockProperties')
     m.correlation_id = RESPONSE_CORR_ID
+    m.reply_to = RANDOM_QUEUE
     return m
