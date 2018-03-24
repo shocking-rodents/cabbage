@@ -5,7 +5,7 @@ stages:
 all_branch_test:
   stage: test
   tags:
-  - alecto-core-test-docker
+  - vtb-test-docker
   image: python:3.6
   script:
   - pip install -r requirements-dev.txt --no-cache-dir
@@ -14,7 +14,7 @@ all_branch_test:
 integration_test:
   stage: integration_test
   tags:
-  - alecto-core-test-docker
+  - vtb-test-docker
   image: python:3.6
   services:
   - rabbitmq:3.7-management-alpine
