@@ -32,14 +32,19 @@ class TestSubscribe:
     """AsyncAmqpRpc.subscribe"""
 
     async def test_ok(self, connection):
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
+        def request_handler(request):
+            return request
+
+        rpc = cabbage.AsyncAmqpRpc(
+            connection=connection,
+            queue_params=dict(passive=False, durable=True, exclusive=True, auto_delete=True),
+            exchange_params=dict(type_name='fanout', passive=False, durable=True, auto_delete=True))
         await rpc.connect()
         assert rpc.channel.queue_declare.call_count == 1
         assert rpc.channel.basic_consume.call_count == 1
 
         await rpc.subscribe(exchange=TEST_EXCHANGE, queue=SUBSCRIPTION_QUEUE, routing_key=SUBSCRIPTION_KEY,
-                            queue_params=dict(passive=False, durable=True, exclusive=True, auto_delete=True),
-                            exchange_params=dict(type_name='fanout', passive=False, durable=True, auto_delete=True))
+                            request_handler=request_handler)
         assert rpc.channel.queue_declare.call_count == 2
         assert rpc.channel.basic_consume.call_count == 2
         rpc.channel.basic_qos.assert_called_once_with(
@@ -50,16 +55,16 @@ class TestSubscribe:
             exchange_name=TEST_EXCHANGE, queue_name=SUBSCRIPTION_QUEUE, routing_key=SUBSCRIPTION_KEY)
         rpc.channel.queue_declare.assert_called_with(
             queue_name=SUBSCRIPTION_QUEUE, auto_delete=True, durable=True, exclusive=True, passive=False)
-        rpc.channel.basic_consume.assert_called_with(
-            callback=rpc._on_request, queue_name=SUBSCRIPTION_QUEUE)
+        # rpc.channel.basic_consume.assert_called_with(  # partial() != partial()
+        #     callback=partial(rpc._on_request, request_handler=request_handler), queue_name=SUBSCRIPTION_QUEUE)
 
     async def test_defaults(self, connection):
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
         assert rpc.channel.queue_declare.call_count == 1
         assert rpc.channel.basic_consume.call_count == 1
 
-        await rpc.subscribe(queue=SUBSCRIPTION_QUEUE)
+        await rpc.subscribe(request_handler=lambda x: x, queue=SUBSCRIPTION_QUEUE)
         assert rpc.channel.queue_declare.call_count == 2
         assert rpc.channel.basic_consume.call_count == 2
         rpc.channel.basic_qos.assert_called_once_with(
@@ -67,20 +72,20 @@ class TestSubscribe:
         rpc.channel.queue_declare.assert_called_with(
             queue_name=SUBSCRIPTION_QUEUE, durable=True, arguments={'x-dead-letter-exchange': 'DLX',
                                                                     'x-dead-letter-routing-key': 'dlx_rpc'})
-        rpc.channel.basic_consume.assert_called_with(
-            callback=rpc._on_request, queue_name=SUBSCRIPTION_QUEUE)
+        # rpc.channel.basic_consume.assert_called_with(
+        #     callback=rpc._on_request, queue_name=SUBSCRIPTION_QUEUE)
         # It is an error to attempt declaring or binding on default exchange:
         rpc.channel.exchange_declare.assert_not_called()
         rpc.channel.queue_bind.assert_not_called()
 
     async def test_amqp_defaults(self, connection):
         """Test that broker defaults (empty queue, empty exchange) are handled well."""
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
         assert rpc.channel.queue_declare.call_count == 1
         assert rpc.channel.basic_consume.call_count == 1
 
-        await rpc.subscribe(exchange='', queue='')
+        await rpc.subscribe(request_handler=lambda x: x, exchange='', queue='')
         assert rpc.channel.queue_declare.call_count == 2
         assert rpc.channel.basic_consume.call_count == 2
         rpc.channel.basic_qos.assert_called_once_with(
@@ -88,8 +93,8 @@ class TestSubscribe:
         rpc.channel.queue_declare.assert_called_with(
             queue_name='', durable=True, arguments={'x-dead-letter-exchange': 'DLX',
                                                     'x-dead-letter-routing-key': 'dlx_rpc'})
-        rpc.channel.basic_consume.assert_called_with(
-            callback=rpc._on_request, queue_name=RANDOM_QUEUE)
+        # rpc.channel.basic_consume.assert_called_with(
+        #     callback=rpc._on_request, queue_name=RANDOM_QUEUE)
         # We are still on default exchange:
         rpc.channel.exchange_declare.assert_not_called()
         rpc.channel.queue_bind.assert_not_called()
@@ -99,7 +104,7 @@ class TestUnsubscribe:
     """AsyncAmqpRpc.unsubscribe"""
 
     async def test_ok(self, connection):
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
         await rpc.unsubscribe(consumer_tag=CONSUMER_TAG)
         rpc.channel.basic_cancel.assert_called_once_with(consumer_tag=CONSUMER_TAG)
@@ -128,9 +133,10 @@ class TestHandleRpc:
     ])
     async def test_responding(self, connection, body, expected, is_async):
         handler = self.request_handler_factory(is_async, responding=True, fail=False)
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=handler)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
-        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
+        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties(),
+                             request_handler=handler)
         handler.assert_called_once_with(expected)
         rpc.channel.basic_client_nack.assert_not_called()
         rpc.channel.basic_client_ack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
@@ -145,9 +151,10 @@ class TestHandleRpc:
     async def test_not_responding(self, connection, body, expected, is_async):
         """Handler returns None instead of str/bytes => no response needed."""
         handler = self.request_handler_factory(is_async, responding=False, fail=False)
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=handler)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
-        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
+        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties(),
+                             request_handler=handler)
         handler.assert_called_once_with(expected)
         rpc.channel.basic_client_nack.assert_not_called()
         rpc.channel.basic_client_ack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
@@ -160,9 +167,10 @@ class TestHandleRpc:
     ])
     async def test_exception(self, connection, body, expected, is_async):
         handler = self.request_handler_factory(is_async, fail=True)
-        rpc = cabbage.AsyncAmqpRpc(connection=connection, request_handler=handler)
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
-        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties())
+        await rpc.handle_rpc(channel=rpc.channel, body=body, envelope=MockEnvelope(), properties=MockProperties(),
+                             request_handler=handler)
         handler.assert_called_once_with(expected)
         rpc.channel.basic_client_nack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
         rpc.channel.basic_client_ack.assert_not_called()

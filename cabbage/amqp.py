@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import inspect
 import uuid
+from functools import partial
 from itertools import cycle
 import random
 from typing import Optional, Callable, Union, Awaitable, Mapping, Dict  # noQA
@@ -88,34 +89,29 @@ class AmqpConnection:
 
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
-                 request_handler: Union[
-                     Callable[[str], Optional[str]],
-                     Callable[[bytes], Optional[bytes]],
-                     Callable[[str], Awaitable[Optional[str]]],
-                     Callable[[bytes], Awaitable[Optional[bytes]]],
-                     None
-                 ] = None,
-                 listen_queues=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
+                 exchange_params: Mapping = None, queue_params: Mapping = None,
+                 subscriptions=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
                  shutdown_timeout=60.0):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
-        :param request_handler: request handler, can be a normal or coroutine function
-                that maps either str->str or bytes->bytes. If `request_handler` returns None,
-                it is taken to mean no response is needed.
-        :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
+        :param queue_params: options for creating queues, default durable and DLX
+        :param exchange_params: options when creating exchanges, default durable and type topic
+        :param subscriptions: list of tuples (handler, queue, exchange, routing_key, queue_params, exchange_params)
+                Rightmost parameters are optional, you can specify only (handler, queue).
         :param raw: do not attempt decoding, use iff `request_handler` maps `bytes -> bytes`.
         :param prefetch_count: per-consumer prefetch message limit, default 1
         :param default_response_timeout: default timeout for awaiting response when sending remote calls
         :param shutdown_timeout: timeout for handlers to finish gracefully on shutdown
         """
+        self.raw = raw
+        self.queue_params = queue_params
+        self.exchange_params = exchange_params
+        self.start_subscriptions = subscriptions or []
         self.default_response_timeout = default_response_timeout
         self.shutdown_timeout = shutdown_timeout
-        self.listen_queues = listen_queues or []
         self.connection = connection
-        self.request_handler = request_handler
         self.prefetch_count = prefetch_count
-        self.raw = raw
         self.keep_running = True
         self.channel = None
         self.callback_queue = None
@@ -138,20 +134,17 @@ class AsyncAmqpRpc:
 
     # AMQP server implementation
 
-    async def subscribe(self, queue: str, exchange: str = '', routing_key: str = None,
-                        exchange_params: Mapping = None, queue_params: Mapping = None) -> str:
+    async def declare(self, queue: str, exchange: str = '', routing_key: str = None,
+                      queue_params: Mapping = None, exchange_params: Mapping = None):
         """
-        Subscribe to a specific queue. Exchange and queue will be created if they do not exist.
+        Set up necessary objects — exchange, queue, binding, QoS.
 
-        :param exchange: exchange name, default '' (default AMQP exchange)
         :param queue: queue name
+        :param exchange: exchange name, default '' (default AMQP exchange)
         :param routing_key: routing key, default same as `queue`
-        :param exchange_params: options for the exchange, default durable and type topic
         :param queue_params: options for the queue, default durable and DLX
-        :return: consumer_tag
+        :param exchange_params: options for the exchange, default durable and type topic
         """
-        if self.request_handler is None:
-            raise ValueError('Request handler is not set')
         if routing_key is None:
             routing_key = queue
         if exchange_params is None:
@@ -177,13 +170,34 @@ class AsyncAmqpRpc:
             prefetch_size=0,
             connection_global=False,
         )
+
+    async def subscribe(self, request_handler: Union[
+        Callable[[str], Optional[str]],
+        Callable[[bytes], Optional[bytes]],
+        Callable[[str], Awaitable[Optional[str]]],
+        Callable[[bytes], Awaitable[Optional[bytes]]],
+    ], queue: str, exchange: str = '', routing_key: str = None) -> str:
+        """
+        Subscribe to a specific queue. Exchange and queue will be created if they do not exist.
+
+        :param request_handler: request handler, can be a normal or coroutine function
+                that maps either str->str or bytes->bytes. If `request_handler` returns None,
+                it is taken to mean no response is needed.
+        :param exchange: exchange name, default '' (default AMQP exchange)
+        :param queue: queue name
+        :param routing_key: routing key, default same as `queue`
+        :return: consumer_tag
+        """
+        await self.declare(queue=queue, exchange=exchange, routing_key=routing_key,
+                           queue_params=self.queue_params, exchange_params=self.exchange_params)
         result = await self.channel.basic_consume(
-            callback=self._on_request,
+            callback=partial(self._on_request, request_handler=request_handler),
             queue_name=queue,
         )
         consumer_tag = result['consumer_tag']
         self._subscriptions.add(consumer_tag)
-        logger.debug(f'subscribed to queue {queue}, bound to exchange {exchange} with key {routing_key}')
+        logger.debug(f'subscribed to queue {queue}, bound to exchange {exchange} with key {routing_key} '
+                     f'(consumer tag {consumer_tag})')
         return consumer_tag
 
     async def unsubscribe(self, consumer_tag: str):
@@ -195,19 +209,20 @@ class AsyncAmqpRpc:
         logger.debug(f'unsubscribed from a queue (consumer tag {consumer_tag})')
         await self.channel.basic_cancel(consumer_tag=consumer_tag)
 
-    async def _on_request(self, channel, body, envelope, properties):
+    async def _on_request(self, channel, body, envelope, properties, request_handler):
         """Run handle_rpc() in background. """
-        task = asyncio.ensure_future(self.handle_rpc(channel, body, envelope, properties))
+        task = asyncio.ensure_future(self.handle_rpc(channel, body, envelope, properties, request_handler))
         self._tasks.add(task)
         task.add_done_callback(lambda fut: self._tasks.remove(fut))
 
-    async def handle_rpc(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties):
+    async def handle_rpc(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties,
+                         request_handler):
         """Process request with handler and send response if needed. """
         try:
             data = body if self.raw else body.decode('utf-8')
             logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
                          f'correlation_id {properties.correlation_id}')
-            response = self.request_handler(data)
+            response = request_handler(data)
             if inspect.isawaitable(response):
                 response = await response
         except Exception as e:
@@ -239,8 +254,8 @@ class AsyncAmqpRpc:
             while self.keep_running:
                 await self.connect()
                 # TODO: reconnect to manual subscriptions on lost connection
-                for exchange, queue, routing_key, queue_params in self.listen_queues:
-                    await self.subscribe(queue, exchange, routing_key, queue_params=queue_params)
+                for params in self.start_subscriptions:
+                    await self.subscribe(*params)
                 await self.connection.protocol.wait_closed()
         finally:
             await self.connection.disconnect()
