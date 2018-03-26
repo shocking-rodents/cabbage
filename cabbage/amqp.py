@@ -95,7 +95,8 @@ class AsyncAmqpRpc:
                      Callable[[bytes], Awaitable[Optional[bytes]]],
                      None
                  ] = None,
-                 listen_queues=None, prefetch_count=1, raw=False, default_ttl=15.0):
+                 listen_queues=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
+                 shutdown_timeout=60.0):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
@@ -105,9 +106,11 @@ class AsyncAmqpRpc:
         :param listen_queues: list of tuples (exchange, queue, routing_key, queue_params)
         :param raw: do not attempt decoding, use iff `request_handler` maps `bytes -> bytes`.
         :param prefetch_count: per-consumer prefetch message limit, default 1
-        :param default_ttl: default timeout for awaiting response when sending remote calls
+        :param default_response_timeout: default timeout for awaiting response when sending remote calls
+        :param shutdown_timeout: timeout for handlers to finish gracefully on shutdown
         """
-        self.default_ttl = default_ttl
+        self.default_response_timeout = default_response_timeout
+        self.shutdown_timeout = shutdown_timeout
         self.listen_queues = listen_queues or []
         self.connection = connection
         self.request_handler = request_handler
@@ -117,6 +120,8 @@ class AsyncAmqpRpc:
         self.channel = None
         self.callback_queue = None
         self._responses = {}  # type: Dict[str, asyncio.Future]
+        self._tasks = set()
+        self._subscriptions = set()
 
     async def connect(self):
         await self.connection.connect()
@@ -176,9 +181,10 @@ class AsyncAmqpRpc:
             callback=self._on_request,
             queue_name=queue,
         )
-        # TODO: save subscription target so that we can reconnect to it on lost connection
+        consumer_tag = result['consumer_tag']
+        self._subscriptions.add(consumer_tag)
         logger.debug(f'subscribed to queue {queue}, bound to exchange {exchange} with key {routing_key}')
-        return result['consumer_tag']
+        return consumer_tag
 
     async def unsubscribe(self, consumer_tag: str):
         """
@@ -191,7 +197,9 @@ class AsyncAmqpRpc:
 
     async def _on_request(self, channel, body, envelope, properties):
         """Run handle_rpc() in background. """
-        asyncio.ensure_future(self.handle_rpc(channel, body, envelope, properties))
+        task = asyncio.ensure_future(self.handle_rpc(channel, body, envelope, properties))
+        self._tasks.add(task)
+        task.add_done_callback(lambda fut: self._tasks.remove(fut))
 
     async def handle_rpc(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties):
         """Process request with handler and send response if needed. """
@@ -230,6 +238,7 @@ class AsyncAmqpRpc:
         try:
             while self.keep_running:
                 await self.connect()
+                # TODO: reconnect to manual subscriptions on lost connection
                 for exchange, queue, routing_key, queue_params in self.listen_queues:
                     await self.subscribe(queue, exchange, routing_key, queue_params=queue_params)
                 await self.connection.protocol.wait_closed()
@@ -241,7 +250,17 @@ class AsyncAmqpRpc:
         asyncio.ensure_future(self.run_server())
 
     async def stop(self, app=None):
-        """aiohttp-compatible on_cleanup coroutine. """
+        """aiohttp-compatible on_shutdown coroutine. """
+        for consumer_tag in self._subscriptions:
+            await self.unsubscribe(consumer_tag)
+        if self._tasks:
+            logger.info(f'waiting for {len(self._tasks)} task(s) to finish normally')
+            done, pending = await asyncio.wait(self._tasks, timeout=self.shutdown_timeout)
+            if pending:
+                level = logger.warning
+            else:
+                level = logger.info
+            level(f'{len(done)} task(s) finished, {len(pending)} task(s) did not finish in time')
         self.keep_running = False
         await self.connection.disconnect()
 
@@ -280,7 +299,7 @@ class AsyncAmqpRpc:
 
         if await_response:
             if timeout is None:
-                timeout = self.default_ttl
+                timeout = self.default_response_timeout
             response = await self._await_response(correlation_id=correlation_id, timeout=timeout)
             if not raw:
                 response = response.decode('utf-8')
