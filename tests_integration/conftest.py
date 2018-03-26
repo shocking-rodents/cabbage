@@ -67,7 +67,7 @@ def vhost_environment(management: Management):
 async def rpc(event_loop):
     """Ready-to-work RPC connected to RabbitMQ in Docker."""
     connection = AmqpConnection(hosts=[('rabbitmq', 5672)], virtualhost=TEST_VHOST, loop=event_loop)
-    rpc = AsyncAmqpRpc(connection=connection, request_handler=lambda x: x)
+    rpc = AsyncAmqpRpc(connection=connection)
     await rpc.connect()
     yield rpc
     await rpc.stop()

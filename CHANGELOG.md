@@ -1,12 +1,12 @@
 CHANGELOG
 =========
 
-0.5 (unreleased)
+0.5 (2018-03-26)
 ----------------
 
-- Support for multiple hosts.
+- Support for cycling through multiple hosts.
 - Per-subscription request handlers.
-- Un-subscription behaviour on shutdown.
+- Stop consuming and wait for request handlers to finish on shutdown.
 
 0.4 (2018-03-12)
 ----------------
