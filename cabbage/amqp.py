@@ -188,6 +188,8 @@ class AsyncAmqpRpc:
         :param routing_key: routing key, default same as `queue`
         :return: consumer_tag
         """
+        if routing_key is None:
+            routing_key = queue
         await self.declare(queue=queue, exchange=exchange, routing_key=routing_key,
                            queue_params=self.queue_params, exchange_params=self.exchange_params)
         result = await self.channel.basic_consume(
