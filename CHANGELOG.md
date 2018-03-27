@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+0.5.1 (2018-03-27)
+------------------
+
+- Removed dependency imports from `setup.py`.
+
 0.5 (2018-03-27)
 ----------------
 

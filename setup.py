@@ -2,16 +2,22 @@
 import os
 from setuptools import setup
 
-import cabbage
-
 
 def read(filename):
     return open(os.path.join(os.path.dirname(__file__), filename)).read()
 
 
+def get_version():
+    """Get version from the package without actually importing it."""
+    init = read('cabbage/__init__.py')
+    for line in init.split('\n'):
+        if line.startswith('__version__'):
+            return eval(line.split('=')[1])
+
+
 setup(
     name='cabbage',
-    version=cabbage.__version__,
+    version=get_version(),
     description='asyncio-based AMQP client and server for RPC.',
     packages=['cabbage'],
     install_requires=read('requirements.txt'),
