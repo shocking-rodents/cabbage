@@ -43,7 +43,7 @@ class Management:
         self._call('delete', 'vhosts', self.vhost)
 
     def publish(self, exchange, routing_key, data):
-        self._call('post', 'exchanges', self.vhost, exchange, 'publish',
+        self._call('post', 'exchanges', self.vhost, exchange or 'amq.default', 'publish',
                    json={'properties': {}, 'routing_key': routing_key, 'payload': data, 'payload_encoding': 'string'})
 
 
