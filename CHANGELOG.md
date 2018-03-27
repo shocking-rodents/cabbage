@@ -1,7 +1,7 @@
 CHANGELOG
 =========
 
-0.5 (2018-03-26)
+0.5 (2018-03-27)
 ----------------
 
 - Support for cycling through multiple hosts.
