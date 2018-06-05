@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import inspect
+import logging
+import random
 import uuid
 from functools import partial
 from itertools import cycle
-import random
 from typing import Optional, Callable, Union, Awaitable, Mapping, Dict  # noQA
-import logging
-import asyncio
 
 import aioamqp
 from aioamqp.channel import Channel
@@ -118,6 +118,7 @@ class AsyncAmqpRpc:
         self._responses = {}  # type: Dict[str, asyncio.Future]
         self._tasks = set()
         self._subscriptions = set()
+        self.is_ready_future = None
 
     async def connect(self):
         await self.connection.connect()
@@ -258,13 +259,16 @@ class AsyncAmqpRpc:
                 # TODO: reconnect to manual subscriptions on lost connection
                 for params in self.start_subscriptions:
                     await self.subscribe(*params)
+                self.is_ready_future.set_result(True)
                 await self.connection.protocol.wait_closed()
         finally:
             await self.connection.disconnect()
 
     async def run(self, app=None):
         """aiohttp-compatible on_startup coroutine. """
+        self.is_ready_future = asyncio.Future()
         asyncio.ensure_future(self.run_server())
+        await self.is_ready_future
 
     async def stop(self, app=None):
         """aiohttp-compatible on_shutdown coroutine. """
