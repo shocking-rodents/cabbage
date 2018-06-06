@@ -354,6 +354,6 @@ class AsyncAmqpRpc:
                 await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
 
     async def wait_connected(self):
-        while not all([self.connection.is_connected and self.channel]):
+        while not all([self.connection.is_connected, self.channel]):
             logger.debug(f'Waiting connection for {self.connection_delay}s...')
             await asyncio.sleep(self.connection_delay)
