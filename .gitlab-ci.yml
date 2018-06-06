@@ -1,12 +1,18 @@
+variables:
+  REGISTRY_URL: $CI_REGISTRY/public_repos/images/
+
 stages:
 - test
 - integration_test
 
+before_script:
+  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+
 all_branch_test:
   stage: test
   tags:
-  - vtb-test-docker
-  image: python:3.6
+  - build-docker
+  image: ${REGISTRY_URL}python:3.6
   script:
   - pip install -r requirements-dev.txt --no-cache-dir
   - pytest --cov=cabbage tests/
@@ -14,10 +20,11 @@ all_branch_test:
 integration_test:
   stage: integration_test
   tags:
-  - vtb-test-docker
-  image: python:3.6
+  - build_docker
+  image: ${REGISTRY_URL}python:3.6
   services:
-  - rabbitmq:3.7-management-alpine
+  - name: ${REGISTRY_URL}rabbitmq:alpine
+    alias: rabbitmq
   script:
   - pip install -r requirements-dev.txt --no-cache-dir
   - pytest tests_integration/
