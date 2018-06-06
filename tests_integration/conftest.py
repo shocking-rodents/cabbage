@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 from functools import partial
+from os import getenv
 from urllib.parse import quote
 
 import pytest
@@ -10,6 +11,8 @@ from requests.auth import HTTPBasicAuth
 from cabbage import AmqpConnection, AsyncAmqpRpc
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+
+TEST_RABBITMQ_HOST = getenv('TEST_RABBITMQ_HOST', 'localhost')
 
 
 class Management:
@@ -53,7 +56,7 @@ TEST_VHOST = 'cabbage_test'
 @pytest.fixture(scope='session')
 def management():
     """Wrapper for RabbitMQ Management Plugin API."""
-    return Management('http://rabbitmq:15672', vhost=TEST_VHOST)
+    return Management(f'http://{TEST_RABBITMQ_HOST}:15672', vhost=TEST_VHOST)
 
 
 @pytest.yield_fixture(scope='function', autouse=True)
@@ -66,7 +69,8 @@ def vhost_environment(management: Management):
 @pytest.fixture
 async def rpc(event_loop):
     """Ready-to-work RPC connected to RabbitMQ in Docker."""
-    connection = AmqpConnection(hosts=[('rabbitmq', 5672)], virtualhost=TEST_VHOST, loop=event_loop)
+    connection = AmqpConnection(hosts=[(TEST_RABBITMQ_HOST, 5672)], virtualhost=TEST_VHOST,
+                                loop=event_loop)
     rpc = AsyncAmqpRpc(connection=connection)
     await rpc.connect()
     yield rpc

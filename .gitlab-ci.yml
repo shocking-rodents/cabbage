@@ -1,3 +1,6 @@
+variables:
+  REGISTRY_URL: $CI_REGISTRY/public_repos/images/
+
 stages:
 - test
 - integration_test
@@ -5,8 +8,8 @@ stages:
 all_branch_test:
   stage: test
   tags:
-  - vtb-test-docker
-  image: python:3.6
+  - build-docker
+  image: ${REGISTRY_URL}python:3.6
   script:
   - pip install -r requirements-dev.txt --no-cache-dir
   - pytest --cov=cabbage tests/
@@ -14,10 +17,13 @@ all_branch_test:
 integration_test:
   stage: integration_test
   tags:
-  - vtb-test-docker
-  image: python:3.6
+  - build-docker
+  image: ${REGISTRY_URL}python:3.6
+  variables:
+    TEST_RABBITMQ_HOST: rabbitmq
   services:
-  - rabbitmq:3.7-management-alpine
+  - name: ${REGISTRY_URL}rabbitmq:management-alpine
+    alias: rabbitmq
   script:
   - pip install -r requirements-dev.txt --no-cache-dir
   - pytest tests_integration/

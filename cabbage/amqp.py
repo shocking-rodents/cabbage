@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import inspect
+import logging
+import random
 import uuid
 from functools import partial
 from itertools import cycle
-import random
 from typing import Optional, Callable, Union, Awaitable, Mapping, Dict  # noQA
-import logging
-import asyncio
 
 import aioamqp
 from aioamqp.channel import Channel
@@ -86,12 +86,17 @@ class AmqpConnection:
         if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             await self.protocol.close()
 
+    @property
+    def is_connected(self):
+        """Property, required for rpc to check readiness"""
+        return bool(self.protocol) and self.protocol.state == OPEN
+
 
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
                  exchange_params: Mapping = None, queue_params: Mapping = None,
                  subscriptions=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
-                 shutdown_timeout=60.0):
+                 shutdown_timeout=60.0, connection_delay: float = 0.1):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
@@ -118,6 +123,7 @@ class AsyncAmqpRpc:
         self._responses = {}  # type: Dict[str, asyncio.Future]
         self._tasks = set()
         self._subscriptions = set()
+        self.connection_delay = connection_delay
 
     async def connect(self):
         await self.connection.connect()
@@ -265,6 +271,7 @@ class AsyncAmqpRpc:
     async def run(self, app=None):
         """aiohttp-compatible on_startup coroutine. """
         asyncio.ensure_future(self.run_server())
+        await self.wait_connected()
 
     async def stop(self, app=None):
         """aiohttp-compatible on_shutdown coroutine. """
@@ -345,3 +352,8 @@ class AsyncAmqpRpc:
             logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
             if channel.is_open:
                 await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
+
+    async def wait_connected(self):
+        while not all([self.connection.is_connected, self.channel]):
+            logger.debug(f'Waiting connection for {self.connection_delay}s...')
+            await asyncio.sleep(self.connection_delay)

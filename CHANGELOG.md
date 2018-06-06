@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+0.5.2 (2018-06-05)
+------------------
+
+- Added blocking mechanism to assure that connection is ready to work
+
 0.5.1 (2018-03-27)
 ------------------
 
