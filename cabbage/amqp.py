@@ -88,14 +88,14 @@ class AmqpConnection:
 
     @property
     def is_connected(self):
-        return self.protocol.state == 'OPEN'
+        return self.protocol and self.protocol.state == OPEN
 
 
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
                  exchange_params: Mapping = None, queue_params: Mapping = None,
                  subscriptions=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
-                 shutdown_timeout=60.0):
+                 shutdown_timeout=60.0, connection_delay: float = 0.1):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
@@ -122,6 +122,7 @@ class AsyncAmqpRpc:
         self._responses = {}  # type: Dict[str, asyncio.Future]
         self._tasks = set()
         self._subscriptions = set()
+        self.connection_delay = connection_delay
 
     async def connect(self):
         await self.connection.connect()
@@ -353,4 +354,5 @@ class AsyncAmqpRpc:
 
     async def wait_connected(self):
         while not self.connection.is_connected:
-            await asyncio.sleep(0.1)
+            logger.debug(f'Waiting connection for {self.connection_delay}s...')
+            await asyncio.sleep(self.connection_delay)
