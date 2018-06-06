@@ -52,7 +52,7 @@ class AmqpConnection:
 
     async def connect(self):
         """Connect to AMQP broker. On failure this function will endlessly try reconnecting.
-        Do nothing if already is_connected or connecting.
+        Do nothing if already connected or connecting.
         """
         if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             return
