@@ -2,10 +2,11 @@
 import asyncio
 
 import pytest
-from aioamqp.protocol import CLOSED
+from aioamqp.protocol import CONNECTING, CLOSING, CLOSED, OPEN
 from asynctest import patch, MagicMock
 
 import cabbage
+from cabbage import AmqpConnection
 from tests.conftest import MockTransport, MockProtocol
 
 pytestmark = pytest.mark.asyncio
@@ -112,3 +113,19 @@ class TestDisconnect:
         connection.protocol.state = CLOSED
         await connection.disconnect()
         connection.protocol.close.assert_not_called()
+
+
+class TestIsConnectedProperty:
+    async def test_protocol_is_none(self, connection):
+        connection.protocol = None
+        assert connection.is_connected is False
+
+    @pytest.mark.parametrize('state', [CONNECTING, CLOSING, CLOSED])
+    async def test_protocol_state_not_equals_open(self, connection: AmqpConnection, state):
+        connection.protocol.state = state
+        assert connection.is_connected is False
+
+    async def test_ok(self, connection: AmqpConnection):
+        connection.protocol = MockProtocol()
+        connection.protocol.state = OPEN
+        assert connection.is_connected is True
