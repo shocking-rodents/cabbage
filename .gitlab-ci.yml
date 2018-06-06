@@ -17,7 +17,7 @@ all_branch_test:
 integration_test:
   stage: integration_test
   tags:
-  - build_docker
+  - build-docker
   image: ${REGISTRY_URL}python:3.6
   services:
   - name: ${REGISTRY_URL}rabbitmq:alpine
