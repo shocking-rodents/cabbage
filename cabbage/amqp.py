@@ -88,6 +88,7 @@ class AmqpConnection:
 
     @property
     def is_connected(self):
+        """Property, required for rpc to check readiness"""
         return bool(self.protocol) and self.protocol.state == OPEN
 
 
@@ -353,6 +354,6 @@ class AsyncAmqpRpc:
                 await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
 
     async def wait_connected(self):
-        while not self.connection.is_connected:
+        while not all([self.connection.is_connected and self.channel]):
             logger.debug(f'Waiting connection for {self.connection_delay}s...')
             await asyncio.sleep(self.connection_delay)

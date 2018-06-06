@@ -46,3 +46,6 @@ async def test_ok():
     await rpc.run()
     result = await rpc.send_rpc('fake', data='abc', await_response=True)
     assert result == '123'
+
+    await rpc.stop()
+    await fake_rpc.stop()
