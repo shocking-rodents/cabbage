@@ -79,7 +79,7 @@ class AmqpConnection:
                 logger.error(f'connection failed, not retrying: <{e.__class__.__name__}> {e}')
                 raise
             else:
-                logger.info(f'is_connected to {host}:{port}')
+                logger.info(f'connected to {host}:{port}')
                 break
 
     async def disconnect(self):
