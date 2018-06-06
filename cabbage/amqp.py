@@ -52,7 +52,7 @@ class AmqpConnection:
 
     async def connect(self):
         """Connect to AMQP broker. On failure this function will endlessly try reconnecting.
-        Do nothing if already connected or connecting.
+        Do nothing if already is_connected or connecting.
         """
         if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             return
@@ -79,12 +79,16 @@ class AmqpConnection:
                 logger.error(f'connection failed, not retrying: <{e.__class__.__name__}> {e}')
                 raise
             else:
-                logger.info(f'connected to {host}:{port}')
+                logger.info(f'is_connected to {host}:{port}')
                 break
 
     async def disconnect(self):
         if self.protocol is not None and self.protocol.state in [CONNECTING, OPEN]:
             await self.protocol.close()
+
+    @property
+    def is_connected(self):
+        return self.protocol.state == 'OPEN'
 
 
 class AsyncAmqpRpc:
@@ -118,7 +122,6 @@ class AsyncAmqpRpc:
         self._responses = {}  # type: Dict[str, asyncio.Future]
         self._tasks = set()
         self._subscriptions = set()
-        self.is_ready_future = None
 
     async def connect(self):
         await self.connection.connect()
@@ -259,16 +262,14 @@ class AsyncAmqpRpc:
                 # TODO: reconnect to manual subscriptions on lost connection
                 for params in self.start_subscriptions:
                     await self.subscribe(*params)
-                self.is_ready_future.set_result(True)
                 await self.connection.protocol.wait_closed()
         finally:
             await self.connection.disconnect()
 
     async def run(self, app=None):
         """aiohttp-compatible on_startup coroutine. """
-        self.is_ready_future = asyncio.Future()
         asyncio.ensure_future(self.run_server())
-        await self.is_ready_future
+        await self.wait_connected()
 
     async def stop(self, app=None):
         """aiohttp-compatible on_shutdown coroutine. """
@@ -349,3 +350,7 @@ class AsyncAmqpRpc:
             logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
             if channel.is_open:
                 await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
+
+    async def wait_connected(self):
+        while not self.connection.is_connected:
+            await asyncio.sleep(0.1)
