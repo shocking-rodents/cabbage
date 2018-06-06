@@ -19,6 +19,8 @@ integration_test:
   tags:
   - build-docker
   image: ${REGISTRY_URL}python:3.6
+  variables:
+    TEST_RABBITMQ_HOST: $RABBITMQ_PORT_5672_TCP_ADDR
   services:
   - name: ${REGISTRY_URL}rabbitmq:alpine
     alias: rabbitmq

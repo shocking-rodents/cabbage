@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
+from os import getenv
+
 import pytest
 from asynctest import MagicMock
 
@@ -7,10 +9,12 @@ from cabbage import AmqpConnection, AsyncAmqpRpc
 
 pytestmark = pytest.mark.asyncio
 
+TEST_RABBITMQ_HOST = getenv('TEST_RABBITMQ_HOST', 'localhost')
+
 
 async def test_sanity(management):
     """Basic sanity check. If this fails, something went horribly wrong (or you are not running in Docker)."""
-    connection = AmqpConnection(hosts=[('rabbitmq', 5672)])
+    connection = AmqpConnection(hosts=[(TEST_RABBITMQ_HOST, 5672)])
     rpc = AsyncAmqpRpc(connection=connection)
     await rpc.connect()
     assert management.get_queue('my_queue_that_should_not_exist').get('error') == 'Object Not Found'
