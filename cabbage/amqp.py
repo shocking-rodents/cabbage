@@ -88,7 +88,7 @@ class AmqpConnection:
 
     @property
     def is_connected(self):
-        return self.protocol and self.protocol.state == OPEN
+        return bool(self.protocol) and self.protocol.state == OPEN
 
 
 class AsyncAmqpRpc:
