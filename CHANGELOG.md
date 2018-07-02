@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+0.5.3 (2018-07-02)
+------------------
+
+- Fix duplication messages with unexpected correlation id  
+
 0.5.2 (2018-06-05)
 ------------------
 
