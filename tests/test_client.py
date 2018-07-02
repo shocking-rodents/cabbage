@@ -87,5 +87,4 @@ class TestOnResponse:
 
     async def test_unexpected_tag(self, rpc):
         await rpc._on_response(channel=rpc.channel, body=b'resp', envelope=MockEnvelope(), properties=MockProperties())
-        rpc.channel.basic_client_ack.assert_not_called()
-        rpc.channel.basic_client_nack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
+        rpc.channel.basic_client_ack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
