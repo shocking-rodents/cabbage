@@ -346,12 +346,11 @@ class AsyncAmqpRpc:
         """Set response result. Called by aioamqp on a message in callback queue. """
         if properties.correlation_id in self._responses:
             self._responses[properties.correlation_id].set_result(body)
-            if channel.is_open:
-                await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
         else:
-            logger.warning(f'unexpected message with correlation_id {properties.correlation_id}')
-            if channel.is_open:
-                await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
+            logger.warning(f'unexpected message with correlation_id {properties.correlation_id}.')
+
+        if channel.is_open:
+            await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
 
     async def wait_connected(self):
         while not all([self.connection.is_connected, self.channel]):
