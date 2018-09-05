@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import aioamqp
+import asyncio
 
 import pytest
 from asynctest import patch, MagicMock
@@ -174,3 +175,36 @@ class TestHandleRpc:
         handler.assert_called_once_with(expected)
         rpc.channel.basic_client_nack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
         rpc.channel.basic_client_ack.assert_not_called()
+
+    @pytest.mark.parametrize('is_connected', [True, False])
+    @pytest.mark.parametrize('channel', [True, False])
+    async def test_wait_connection(self, is_connected, channel):
+        """
+        Checking for execution time of cabbage.AsyncAmqpRpc.wait_connected()
+        In case of True value of both variables 'connection.is_connected' and 'channel'
+        the function should terminate immediately. Else the function should check
+        the state of these variables with an interval determined in variable 'connection_delay' (in seconds)
+        until both variables won't have True value.
+        """
+
+        class FakeSelf:
+
+            class FakeConnection:
+                def __init__(self, is_connected_):
+                    self.is_connected = is_connected_
+
+            def __init__(self, is_connected_, channel_):
+                self.connection = self.FakeConnection(is_connected_)
+                self.channel = channel_
+                self.connection_delay = test_delay
+
+        test_delay = 0.2
+        fake_self = FakeSelf(is_connected, channel)
+        future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.wait_connected(fake_self))
+        await asyncio.sleep(test_delay)
+        if not future.done():
+            fake_self.connection.is_connected = True
+            fake_self.channel = True
+
+        await asyncio.sleep(test_delay)
+        assert future.done()
