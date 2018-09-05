@@ -114,11 +114,11 @@ class TestHandleRpc:
     """AsyncAmqpRpc.handle_rpc: low-level handler called by aioamqp"""
 
     @staticmethod
-    def request_handler_factory(async, responding=True, fail=False):
+    def request_handler_factory(async_, responding=True, fail=False):
         """Creates a request_handler the server can call on the payload."""
         if fail:
             return MagicMock(side_effect=Exception('Handler error'))
-        if async:
+        if async_:
             async def request_handler(request):
                 return request if responding else None
         else:
