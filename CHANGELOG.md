@@ -5,7 +5,7 @@ CHANGELOG
 -----
 
 - Python 3.7 support
-- aiompq >= 0.11
+- aiompq==0.11
 
 0.5.3 (2018-07-02)
 ------------------
