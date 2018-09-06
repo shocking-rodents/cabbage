@@ -189,7 +189,6 @@ class TestHandleRpc:
         """
 
         class FakeSelf:
-
             class FakeConnection:
                 def __init__(self, is_connected_):
                     self.is_connected = is_connected_
@@ -238,4 +237,30 @@ class TestHandleRpc:
         if pending:
             await asyncio.sleep(big_delay)
 
+        assert future.done()
+
+    async def test_run(self):
+        """
+        Test for cabbage.AsyncAmqpRpc.run(). This function requires
+        termination of cabbage.AsyncAmqpRpc.wait_connected() function
+        """
+
+        class FakeRunner:
+            def __init__(self, delay_):
+                self.delay = delay_
+
+            async def run_server(self):
+                pass
+
+            async def wait_connected(self):
+                await asyncio.sleep(self.delay)
+
+        delay = TEST_DELAY
+        delta = 0.1 * TEST_DELAY
+        fake_runner = FakeRunner(delay)
+        future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.run(fake_runner))
+
+        await asyncio.sleep(delay + delta)
+
+        # wait_connected() have been terminated and cabbage.AsyncAmqpRpc.run() should also terminate
         assert future.done()
