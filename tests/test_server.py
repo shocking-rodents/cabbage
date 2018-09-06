@@ -10,6 +10,7 @@ from tests.conftest import MockTransport, MockProtocol, SUBSCRIPTION_QUEUE, TEST
     RANDOM_QUEUE, HOST, MockEnvelope, MockProperties, CONSUMER_TAG, DELIVERY_TAG, RESPONSE_CORR_ID
 
 pytestmark = pytest.mark.asyncio
+TEST_DELAY = 0.2
 
 
 class TestConnect:
@@ -196,15 +197,45 @@ class TestHandleRpc:
             def __init__(self, is_connected_, channel_):
                 self.connection = self.FakeConnection(is_connected_)
                 self.channel = channel_
-                self.connection_delay = test_delay
+                self.connection_delay = TEST_DELAY
 
-        test_delay = 0.2
         fake_self = FakeSelf(is_connected, channel)
         future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.wait_connected(fake_self))
-        await asyncio.sleep(test_delay)
+        await asyncio.sleep(TEST_DELAY)
         if not future.done():
             fake_self.connection.is_connected = True
             fake_self.channel = True
 
-        await asyncio.sleep(test_delay)
+        await asyncio.sleep(TEST_DELAY)
+        assert future.done()
+
+    @pytest.mark.parametrize('number_of_tasks', [0, 1, 10])
+    @pytest.mark.parametrize('pending', [True, False])
+    async def test_launch_server(self, connection, number_of_tasks, pending):
+        """
+        Test for cabbage.AsyncAmqpRpc.stop(). All tasks should execute asynchronously.
+        In process of tests it may be created a big task (pending variable) if compare with others ones.
+        In this case the task should continue the executing after calling the target function
+        """
+
+        small_delay = TEST_DELAY * 0.5
+        big_delay = TEST_DELAY * 3
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
+        rpc.shutdown_timeout = TEST_DELAY
+        await rpc.connect()
+        await rpc.subscribe(request_handler=lambda x: x, queue=SUBSCRIPTION_QUEUE)
+
+        rpc._tasks = [asyncio.sleep(small_delay) for i in range(number_of_tasks)]
+        if pending:
+            # a big delay task
+            rpc._tasks.append(asyncio.sleep(big_delay))
+
+        await asyncio.sleep(TEST_DELAY)
+        future = asyncio.ensure_future(rpc.stop())
+        await asyncio.sleep(TEST_DELAY)
+
+        # if self._tasks contains a big delay task, the operation shouldn't be done
+        if pending:
+            await asyncio.sleep(big_delay)
+
         assert future.done()
