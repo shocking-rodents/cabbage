@@ -225,21 +225,17 @@ class TestHandleRpc:
         await rpc.connect()
         await rpc.subscribe(request_handler=lambda x: x, queue=SUBSCRIPTION_QUEUE)
 
-        if number_of_tasks != 0:
-            rpc._tasks = [asyncio.sleep(small_delay) for i in range(number_of_tasks)]
-            if pending:
-                rpc._tasks.append(asyncio.sleep(big_delay))
-        elif pending:
-            # Big delay task
-            rpc._tasks = [asyncio.sleep(big_delay)]
+        rpc._tasks = [asyncio.sleep(small_delay) for i in range(number_of_tasks)]
+        if pending:
+            # a big delay task
+            rpc._tasks.append(asyncio.sleep(big_delay))
 
         await asyncio.sleep(TEST_DELAY)
         future = asyncio.ensure_future(rpc.stop())
-        assert not future.done()
         await asyncio.sleep(TEST_DELAY)
 
         # if self._tasks contains a big delay task, the operation shouldn't be done
-        assert future.done() is not pending
         if pending:
             await asyncio.sleep(big_delay)
+
         assert future.done()
