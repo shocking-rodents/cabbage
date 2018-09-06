@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import aioamqp
 import asyncio
+import random
 
 import pytest
 from asynctest import patch, MagicMock
@@ -263,4 +264,53 @@ class TestHandleRpc:
         await asyncio.sleep(delay + delta)
 
         # wait_connected() have been terminated and cabbage.AsyncAmqpRpc.run() should also terminate
+        assert future.done()
+
+    async def test_run_server(self):
+        """
+        Test for cabbage.AsyncAmqpRpc.run_server. The fuction shouldn't terminate until
+        the variable self.keep_running is True.
+        """
+
+        class FakeProtocol:
+            def __init__(self, delay):
+                self.delay = delay
+
+            async def wait_closed(self):
+                await asyncio.sleep(self.delay)
+
+        class FakeConnection:
+            def __init__(self, delay):
+                self.protocol = FakeProtocol(delay)
+                self.disconnect_delay = delay
+
+            async def disconnect(self):
+                await asyncio.sleep(self.disconnect_delay)
+
+        class FakeSelf:
+            def __init__(self, delay):
+                self.connection = FakeConnection(delay)
+                self.keep_running = True
+                self.start_subscriptions = [[random.random() for _ in range(5)] for _ in range(5)]
+
+            async def subscribe(self, *params):
+                pass
+
+            async def connect(self):
+                pass
+
+        test_delay = TEST_DELAY
+        delta = TEST_DELAY * 0.1
+        fake_self = FakeSelf(test_delay)
+        future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.run_server(fake_self))
+
+        # While fake_self.keep_runnig the function shouldn't terminate
+        await asyncio.sleep(3 * test_delay)
+        assert not future.done()
+
+        # After changing fake_self.keep_running the function should terminate
+        # One delay is for self.connection.protocol.wait_closed,
+        # another one is for self.connection.disconnect
+        fake_self.keep_running = False
+        await asyncio.sleep(2 * test_delay + delta)
         assert future.done()
