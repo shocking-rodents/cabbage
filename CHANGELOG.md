@@ -1,12 +1,12 @@
 CHANGELOG
 =========
 
-0.6.0
+0.6.0 (2018-09-07)
 -----
 
 - Python 3.7 support
 - aiompq==0.11
-- added tests for cabbage.AsyncAmqpRpc.wait_connected()
+- Added tests for amqp.py
 
 0.5.3 (2018-07-02)
 ------------------
