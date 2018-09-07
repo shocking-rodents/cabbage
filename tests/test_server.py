@@ -314,3 +314,25 @@ class TestHandleRpc:
         fake_self.keep_running = False
         await asyncio.sleep(2 * test_delay + delta)
         assert future.done()
+
+    async def test_on_request(self, rpc):
+        """
+        Test for cabbage.AsyncAmqpRpc._on_request
+        It's checking that callback inside the function has been called
+        """
+        big_delay = 2 * TEST_DELAY
+
+        async def run_delay(request):
+            await asyncio.sleep(big_delay)
+
+        delta = TEST_DELAY * 0.1
+        await rpc.connect()
+        asyncio.ensure_future(rpc._on_request(rpc.channel, b'', MockEnvelope(), MockProperties(), run_delay))
+
+        # rpc._tasks shouldn't be empty
+        await asyncio.sleep(TEST_DELAY)
+        assert len(rpc._tasks) != 0
+
+        # after request_handler argument of tested function is done, callback for clearing rpc._tasks should run
+        await asyncio.sleep(TEST_DELAY + delta)
+        assert len(rpc._tasks) == 0
