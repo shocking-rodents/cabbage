@@ -2,6 +2,7 @@
 import aioamqp
 import asyncio
 import random
+from itertools import islice
 
 import pytest
 from asynctest import patch, MagicMock
@@ -336,3 +337,32 @@ class TestHandleRpc:
         # after request_handler argument of tested function is done, callback for clearing rpc._tasks should run
         await asyncio.sleep(TEST_DELAY + delta)
         assert len(rpc._tasks) == 0
+
+    @pytest.mark.parametrize('shuffle', [True, False])
+    async def test_shuffle(self, shuffle):
+        """
+        Test for cabbage.AmqpConnection.cycle_hosts
+        It checks correct work of parameter 'shuffle' and also changing the state of
+        internal variable self.hosts during shuffling
+        """
+
+        # Generating random hosts
+        hosts_length = 100
+        hosts = [random.random() for _ in range(hosts_length)]
+
+        # Creating a copy, and use its in constructor of AmqpConnection
+        hosts_copy = hosts.copy()
+        connection = cabbage.AmqpConnection(hosts_copy)
+
+        # Retrieving one period of hosts after cycle hosts
+        retrieved_hosts_two_periods = list(islice(connection.cycle_hosts(shuffle), hosts_length * 2))
+        retrieved_hosts = retrieved_hosts_two_periods[0:hosts_length]
+
+        # Check for correct work of cycle
+        assert retrieved_hosts + retrieved_hosts == retrieved_hosts_two_periods
+
+        # cycle_hosts() always includes self.hosts
+        assert retrieved_hosts == hosts_copy
+
+        # Check for shuffling
+        assert (hosts == retrieved_hosts) != shuffle
