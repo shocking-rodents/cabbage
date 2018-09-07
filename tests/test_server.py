@@ -315,7 +315,7 @@ class TestHandleRpc:
         await asyncio.sleep(2 * test_delay + delta)
         assert future.done()
 
-    async def test_on_request(self, connection):
+    async def test_on_request(self, rpc):
         """
         Test for cabbage.AsyncAmqpRpc._on_request
         It's checking that callback inside the function has been called
@@ -326,7 +326,6 @@ class TestHandleRpc:
             await asyncio.sleep(big_delay)
 
         delta = TEST_DELAY * 0.1
-        rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
         asyncio.ensure_future(rpc._on_request(rpc.channel, b'', MockEnvelope(), MockProperties(), run_delay))
 
