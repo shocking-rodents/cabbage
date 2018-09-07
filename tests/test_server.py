@@ -320,19 +320,15 @@ class TestHandleRpc:
         Test for cabbage.AsyncAmqpRpc._on_request
         It's checking that callback inside the function has been called
         """
-
-        def test_delay(delay):
-            async def run_delay(request):
-                await asyncio.sleep(delay)
-
-            return run_delay
-
         big_delay = 2 * TEST_DELAY
+
+        async def run_delay(request):
+            await asyncio.sleep(big_delay)
+
         delta = TEST_DELAY * 0.1
         rpc = cabbage.AsyncAmqpRpc(connection=connection)
         await rpc.connect()
-        rpc.test_delay = test_delay(big_delay)
-        asyncio.ensure_future(rpc._on_request(rpc.channel, b'', MockEnvelope(), MockProperties(), rpc.test_delay))
+        asyncio.ensure_future(rpc._on_request(rpc.channel, b'', MockEnvelope(), MockProperties(), run_delay))
 
         # rpc._tasks shouldn't be empty
         await asyncio.sleep(TEST_DELAY)
