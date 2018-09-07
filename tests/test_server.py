@@ -324,6 +324,7 @@ class TestHandleRpc:
         def test_delay(delay):
             async def run_delay(request):
                 await asyncio.sleep(delay)
+
             return run_delay
 
         big_delay = 2 * TEST_DELAY
@@ -338,5 +339,5 @@ class TestHandleRpc:
         assert len(rpc._tasks) != 0
 
         # after request_handler argument of tested function is done, callback for clearing rpc._tasks should run
-        await asyncio.sleep(TEST_DELAY+delta)
+        await asyncio.sleep(TEST_DELAY + delta)
         assert len(rpc._tasks) == 0
