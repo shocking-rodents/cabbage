@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 import aioamqp
+import asyncio
+import random
+from itertools import islice
 
 import pytest
 from asynctest import patch, MagicMock
@@ -9,6 +12,7 @@ from tests.conftest import MockTransport, MockProtocol, SUBSCRIPTION_QUEUE, TEST
     RANDOM_QUEUE, HOST, MockEnvelope, MockProperties, CONSUMER_TAG, DELIVERY_TAG, RESPONSE_CORR_ID
 
 pytestmark = pytest.mark.asyncio
+TEST_DELAY = 0.2
 
 
 class TestConnect:
@@ -114,11 +118,11 @@ class TestHandleRpc:
     """AsyncAmqpRpc.handle_rpc: low-level handler called by aioamqp"""
 
     @staticmethod
-    def request_handler_factory(async, responding=True, fail=False):
+    def request_handler_factory(async_, responding=True, fail=False):
         """Creates a request_handler the server can call on the payload."""
         if fail:
             return MagicMock(side_effect=Exception('Handler error'))
-        if async:
+        if async_:
             async def request_handler(request):
                 return request if responding else None
         else:
@@ -174,3 +178,191 @@ class TestHandleRpc:
         handler.assert_called_once_with(expected)
         rpc.channel.basic_client_nack.assert_called_once_with(delivery_tag=DELIVERY_TAG)
         rpc.channel.basic_client_ack.assert_not_called()
+
+    @pytest.mark.parametrize('is_connected', [True, False])
+    @pytest.mark.parametrize('channel', [True, False])
+    async def test_wait_connection(self, is_connected, channel):
+        """
+        Checking for execution time of cabbage.AsyncAmqpRpc.wait_connected()
+        In case of True value of both variables 'connection.is_connected' and 'channel'
+        the function should terminate immediately. Else the function should check
+        the state of these variables with an interval determined in variable 'connection_delay' (in seconds)
+        until both variables won't have True value.
+        """
+
+        class FakeSelf:
+            class FakeConnection:
+                def __init__(self, is_connected_):
+                    self.is_connected = is_connected_
+
+            def __init__(self, is_connected_, channel_):
+                self.connection = self.FakeConnection(is_connected_)
+                self.channel = channel_
+                self.connection_delay = TEST_DELAY
+
+        fake_self = FakeSelf(is_connected, channel)
+        future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.wait_connected(fake_self))
+        await asyncio.sleep(TEST_DELAY)
+        if not future.done():
+            fake_self.connection.is_connected = True
+            fake_self.channel = True
+
+        await asyncio.sleep(TEST_DELAY)
+        assert future.done()
+
+    @pytest.mark.parametrize('number_of_tasks', [0, 1, 10])
+    @pytest.mark.parametrize('pending', [True, False])
+    async def test_launch_server(self, connection, number_of_tasks, pending):
+        """
+        Test for cabbage.AsyncAmqpRpc.stop(). All tasks should execute asynchronously.
+        In process of tests it may be created a big task (pending variable) if compare with others ones.
+        In this case the task should continue the executing after calling the target function
+        """
+
+        small_delay = TEST_DELAY * 0.5
+        big_delay = TEST_DELAY * 3
+        rpc = cabbage.AsyncAmqpRpc(connection=connection)
+        rpc.shutdown_timeout = TEST_DELAY
+        await rpc.connect()
+        await rpc.subscribe(request_handler=lambda x: x, queue=SUBSCRIPTION_QUEUE)
+
+        rpc._tasks = [asyncio.sleep(small_delay) for i in range(number_of_tasks)]
+        if pending:
+            # a big delay task
+            rpc._tasks.append(asyncio.sleep(big_delay))
+
+        await asyncio.sleep(TEST_DELAY)
+        future = asyncio.ensure_future(rpc.stop())
+        await asyncio.sleep(TEST_DELAY)
+
+        # if self._tasks contains a big delay task, the operation shouldn't be done
+        if pending:
+            await asyncio.sleep(big_delay)
+
+        assert future.done()
+
+    async def test_run(self):
+        """
+        Test for cabbage.AsyncAmqpRpc.run(). This function requires
+        termination of cabbage.AsyncAmqpRpc.wait_connected() function
+        """
+
+        class FakeRunner:
+            def __init__(self, delay_):
+                self.delay = delay_
+
+            async def run_server(self):
+                pass
+
+            async def wait_connected(self):
+                await asyncio.sleep(self.delay)
+
+        delay = TEST_DELAY
+        delta = 0.1 * TEST_DELAY
+        fake_runner = FakeRunner(delay)
+        future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.run(fake_runner))
+
+        await asyncio.sleep(delay + delta)
+
+        # wait_connected() have been terminated and cabbage.AsyncAmqpRpc.run() should also terminate
+        assert future.done()
+
+    async def test_run_server(self):
+        """
+        Test for cabbage.AsyncAmqpRpc.run_server. The fuction shouldn't terminate until
+        the variable self.keep_running is True.
+        """
+
+        class FakeProtocol:
+            def __init__(self, delay):
+                self.delay = delay
+
+            async def wait_closed(self):
+                await asyncio.sleep(self.delay)
+
+        class FakeConnection:
+            def __init__(self, delay):
+                self.protocol = FakeProtocol(delay)
+                self.disconnect_delay = delay
+
+            async def disconnect(self):
+                await asyncio.sleep(self.disconnect_delay)
+
+        class FakeSelf:
+            def __init__(self, delay):
+                self.connection = FakeConnection(delay)
+                self.keep_running = True
+                self.start_subscriptions = [[random.random() for _ in range(5)] for _ in range(5)]
+
+            async def subscribe(self, *params):
+                pass
+
+            async def connect(self):
+                pass
+
+        test_delay = TEST_DELAY
+        delta = TEST_DELAY * 0.1
+        fake_self = FakeSelf(test_delay)
+        future = asyncio.ensure_future(cabbage.AsyncAmqpRpc.run_server(fake_self))
+
+        # While fake_self.keep_runnig the function shouldn't terminate
+        await asyncio.sleep(3 * test_delay)
+        assert not future.done()
+
+        # After changing fake_self.keep_running the function should terminate
+        # One delay is for self.connection.protocol.wait_closed,
+        # another one is for self.connection.disconnect
+        fake_self.keep_running = False
+        await asyncio.sleep(2 * test_delay + delta)
+        assert future.done()
+
+    async def test_on_request(self, rpc):
+        """
+        Test for cabbage.AsyncAmqpRpc._on_request
+        It's checking that callback inside the function has been called
+        """
+        big_delay = 2 * TEST_DELAY
+
+        async def run_delay(request):
+            await asyncio.sleep(big_delay)
+
+        delta = TEST_DELAY * 0.1
+        await rpc.connect()
+        asyncio.ensure_future(rpc._on_request(rpc.channel, b'', MockEnvelope(), MockProperties(), run_delay))
+
+        # rpc._tasks shouldn't be empty
+        await asyncio.sleep(TEST_DELAY)
+        assert len(rpc._tasks) != 0
+
+        # after request_handler argument of tested function is done, callback for clearing rpc._tasks should run
+        await asyncio.sleep(TEST_DELAY + delta)
+        assert len(rpc._tasks) == 0
+
+    @pytest.mark.parametrize('shuffle', [True, False])
+    async def test_shuffle(self, shuffle):
+        """
+        Test for cabbage.AmqpConnection.cycle_hosts
+        It checks correct work of parameter 'shuffle' and also changing the state of
+        internal variable self.hosts during shuffling
+        """
+
+        # Generating random hosts
+        hosts_length = 100
+        hosts = [random.random() for _ in range(hosts_length)]
+
+        # Creating a copy, and use its in constructor of AmqpConnection
+        hosts_copy = hosts.copy()
+        connection = cabbage.AmqpConnection(hosts_copy)
+
+        # Retrieving one period of hosts after cycle hosts
+        retrieved_hosts_two_periods = list(islice(connection.cycle_hosts(shuffle), hosts_length * 2))
+        retrieved_hosts = retrieved_hosts_two_periods[0:hosts_length]
+
+        # Check for correct work of cycle
+        assert retrieved_hosts + retrieved_hosts == retrieved_hosts_two_periods
+
+        # cycle_hosts() always includes self.hosts
+        assert retrieved_hosts == hosts_copy
+
+        # Check for shuffling
+        assert (hosts == retrieved_hosts) != shuffle
