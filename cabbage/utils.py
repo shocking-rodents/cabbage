@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-
-
 class ExponentialBackoff:
     """
     Exponential backoff with an upper limit.

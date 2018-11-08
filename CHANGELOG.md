@@ -1,6 +1,12 @@
 CHANGELOG
 =========
 
+0.7.0 (2018-10-29)
+-----
+
+- Added connect coroutine with extended ssl option
+
+
 0.6.0 (2018-09-07)
 -----
 
