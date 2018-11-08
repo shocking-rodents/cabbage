@@ -3,16 +3,17 @@ import asyncio
 import inspect
 import logging
 import random
+import socket
+import ssl as ssl_module
 import uuid
 from functools import partial
 from itertools import cycle
-from typing import Optional, Callable, Union, Awaitable, Mapping, Dict  # noQA
+from typing import Optional, Callable, Union, Awaitable, Mapping, Dict
 
-import aioamqp
 from aioamqp.channel import Channel
 from aioamqp.envelope import Envelope
 from aioamqp.properties import Properties
-from aioamqp.protocol import CONNECTING, OPEN
+from aioamqp.protocol import AmqpProtocol, CONNECTING, OPEN
 
 from .utils import FibonaccianBackoff
 
@@ -24,13 +25,14 @@ class ServiceUnavailableError(Exception):
 
 
 class AmqpConnection:
-    def __init__(self, hosts=None, username='guest', password='guest', virtualhost='/', loop=None):
+    def __init__(self, hosts=None, username='guest', password='guest', virtualhost='/', loop=None, ssl=False):
         """
         :param hosts: iterable with tuples (host, port), default localhost:5672
         :param username: AMQP login, default guest
         :param password: AMQP password, default guest
         :param virtualhost: AMQP virtual host, default /
         :param loop: asyncio event loop, default current event loop
+        :param ssl: bool or SSLContext, uses default ssl context if True, default False
         """
         self.loop = loop or asyncio.get_event_loop()
         self.username = username
@@ -40,6 +42,7 @@ class AmqpConnection:
         self._connection_cycle = self.cycle_hosts()
         self.transport = None
         self.protocol = None
+        self.ssl = ssl
 
     async def channel(self):
         if self.protocol is not None:
@@ -60,13 +63,14 @@ class AmqpConnection:
         delay = FibonaccianBackoff(limit=60.0)
         for host, port in self._connection_cycle:
             try:
-                self.transport, self.protocol = await aioamqp.connect(
+                self.transport, self.protocol = await aioamqp_connect(
                     loop=self.loop,
                     host=host,
                     port=port,
                     login=self.username,
                     password=self.password,
                     virtualhost=self.virtualhost,
+                    ssl=self.ssl
                 )
             except OSError as e:
                 # Connection-related errors are mostly represented by `ConnectionError`,
@@ -356,3 +360,65 @@ class AsyncAmqpRpc:
         while not all([self.connection.is_connected, self.channel]):
             logger.debug(f'Waiting connection for {self.connection_delay}s...')
             await asyncio.sleep(self.connection_delay)
+
+
+async def aioamqp_connect(host='localhost', port=None, login='guest', password='guest', virtualhost='/', ssl=False,
+                    login_method='AMQPLAIN', insist=False, protocol_factory=AmqpProtocol, *, verify_ssl=True,
+                    loop=None, timeout=None, **kwargs):
+    """Convenient method to connect to an AMQP broker
+        :param host:          the host to connect to
+        :param port:          broker port
+        :param login:         login
+        :param password:      password
+        :param virtualhost:   AMQP virtualhost to use for this connection
+        :param ssl:           bool: Create an SSL connection instead of a plain unencrypted one
+                              SSLContext: Set custom SSLContext object
+        :param verify_ssl:    Verify server's SSL certificate (True by default)
+        :param login_method:  AMQP auth method
+        :param insist:        Insist on connecting to a server
+        :param protocol_factory: Factory to use, if you need to subclass AmqpProtocol
+        :param loop:          Set the event loop to use
+        :param kwargs:        Arguments to be given to the protocol_factory instance
+        :return:              a tuple (transport, protocol) of an AmqpProtocol instance
+    """
+    SSL_PORT = 5671
+    DEFAULT_PORT = 5672
+
+    if loop is None:
+        loop = asyncio.get_event_loop()
+    factory = lambda: protocol_factory(loop=loop, **kwargs)
+
+    create_connection_kwargs = {}
+
+    if ssl:
+        ssl_context = ssl_module.create_default_context() if isinstance(ssl, bool) else ssl
+        if not verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl_module.CERT_NONE
+        create_connection_kwargs['ssl'] = ssl_context
+
+    if port is None:
+        if ssl:
+            port = SSL_PORT
+        else:
+            port = DEFAULT_PORT
+
+    transport, protocol = await loop.create_connection(
+        factory, host, port, **create_connection_kwargs
+    )
+
+    # these 2 flags *may* show up in sock.type. They are only available on linux
+    # see https://bugs.python.org/issue21327
+    nonblock = getattr(socket, 'SOCK_NONBLOCK', 0)
+    cloexec = getattr(socket, 'SOCK_CLOEXEC', 0)
+    sock = transport.get_extra_info('socket')
+    if sock is not None and (sock.type & ~nonblock & ~cloexec) == socket.SOCK_STREAM:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+    try:
+        await protocol.start_connection(host, port, login, password, virtualhost, ssl=ssl, login_method=login_method, insist=insist)
+    except Exception:
+        await protocol.wait_closed(timeout=timeout)
+        raise
+
+    return transport, protocol

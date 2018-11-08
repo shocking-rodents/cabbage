@@ -24,6 +24,7 @@ async def rpc(connection):
     await _rpc.connect()
     return _rpc
 
+
 # some non-default values to use in tests
 
 
