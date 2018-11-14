@@ -1,6 +1,11 @@
 CHANGELOG
 =========
 
+0.8.0 (2018-11-14)
+-----
+
+- Added FakeAsyncAmqpRpc class
+
 0.7.0 (2018-10-29)
 -----
 
