@@ -1,19 +1,24 @@
 CHANGELOG
 =========
 
+0.9.0 (2018-11-30)
+------------------
+
+- Fix AsyncAmqpRpc.send_rpc options to allow custom correlation id.
+
 0.8.0 (2018-11-14)
------
+------------------
 
 - Added FakeAsyncAmqpRpc class
 
 0.7.0 (2018-10-29)
------
+------------------
 
 - Added connect coroutine with extended ssl option
 
 
 0.6.0 (2018-09-07)
------
+------------------
 
 - Python 3.7 support
 - aiompq==0.11

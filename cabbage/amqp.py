@@ -294,12 +294,14 @@ class AsyncAmqpRpc:
 
     # AMQP client implementation
 
-    async def send_rpc(self, destination: str, data: Union[str, bytes], exchange: str = '',
-                       await_response=True, timeout: float = None) -> Union[str, bytes, None]:
+    async def send_rpc(self, destination: str, data: Union[str, bytes], exchange: str = '', await_response=True,
+                       timeout: float = None, correlation_id: str = None) -> Union[str, bytes, None]:
         """
-        Execute a method on remote server.
-        If `await_response` is True, the call blocks coroutine until the result
-        is returned or until `timeout` seconds passed.
+        Execute a method on remote server. Sends `data` to `destination` routing key.
+
+        If `await_response` is True, the call blocks coroutine until the result is returned or until `timeout` seconds
+        passed (class default is used if None). AMQP correlation_id is set to `correlation_id` or new UUID if None.
+
         Raises `ServiceUnavailableError` on response timeout.
         """
         # TODO: retry on error?
@@ -311,7 +313,8 @@ class AsyncAmqpRpc:
             raw = True
         properties = dict()
         if await_response:
-            correlation_id = str(uuid.uuid4())
+            if correlation_id is None:
+                correlation_id = str(uuid.uuid4())
             properties = {
                 'reply_to': self.callback_queue,
                 'correlation_id': correlation_id,
@@ -363,8 +366,8 @@ class AsyncAmqpRpc:
 
 
 async def aioamqp_connect(host='localhost', port=None, login='guest', password='guest', virtualhost='/', ssl=False,
-                    login_method='AMQPLAIN', insist=False, protocol_factory=AmqpProtocol, *, verify_ssl=True,
-                    loop=None, timeout=None, **kwargs):
+                          login_method='AMQPLAIN', insist=False, protocol_factory=AmqpProtocol, *, verify_ssl=True,
+                          loop=None, timeout=None, **kwargs):
     """Convenient method to connect to an AMQP broker
         :param host:          the host to connect to
         :param port:          broker port
@@ -386,7 +389,8 @@ async def aioamqp_connect(host='localhost', port=None, login='guest', password='
 
     if loop is None:
         loop = asyncio.get_event_loop()
-    factory = lambda: protocol_factory(loop=loop, **kwargs)
+
+    def factory(): return protocol_factory(loop=loop, **kwargs)
 
     create_connection_kwargs = {}
 
@@ -416,7 +420,8 @@ async def aioamqp_connect(host='localhost', port=None, login='guest', password='
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     try:
-        await protocol.start_connection(host, port, login, password, virtualhost, ssl=ssl, login_method=login_method, insist=insist)
+        await protocol.start_connection(host, port, login, password, virtualhost, ssl=ssl, login_method=login_method,
+                                        insist=insist)
     except Exception:
         await protocol.wait_closed(timeout=timeout)
         raise

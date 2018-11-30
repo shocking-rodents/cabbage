@@ -6,8 +6,8 @@ from cabbage.amqp import AsyncAmqpRpc, ServiceUnavailableError
 
 class FakeAsyncAmqpRpc(AsyncAmqpRpc):
     """
-        Can be used instead of AsyncAmqpRpc class for tests.
-        Allows to set expected responses for testing amqp rpc client and to send fake message for testing a server.
+    Can be used instead of AsyncAmqpRpc class for tests.
+    Allows to set expected responses for testing amqp rpc client and to send fake message for testing a server.
     """
 
     def __init__(self, *args, **kwargs):
@@ -22,7 +22,7 @@ class FakeAsyncAmqpRpc(AsyncAmqpRpc):
     def set_response(self, routing_key, data):
         self.responses[routing_key] = data
 
-    async def send_rpc(self, destination, data, exchange='', await_response=True, timeout=None):
+    async def send_rpc(self, destination, data, exchange='', await_response=True, timeout=None, correlation_id=None):
         self.call_args.append((destination, data))
         if not await_response:
             return

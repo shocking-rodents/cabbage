@@ -5,4 +5,4 @@ from .amqp import AmqpConnection, AsyncAmqpRpc, ServiceUnavailableError
 
 __all__ = ['ServiceUnavailableError', 'AmqpConnection', 'AsyncAmqpRpc', 'test_utils']
 
-__version__ = '0.8.0'
+__version__ = '0.9.0'
