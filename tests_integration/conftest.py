@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import pytest
 import requests
+from asynctest import MagicMock
 from requests.auth import HTTPBasicAuth
 
 from cabbage import AmqpConnection, AsyncAmqpRpc
@@ -37,6 +38,9 @@ class Management:
 
     def get_consumers(self):
         return self._call('get', 'consumers', self.vhost)
+
+    def get_exchanges(self):
+        return self._call('get', 'exchanges', self.vhost)
 
     def put_vhost(self):
         self._call('put', 'vhosts', self.vhost)
@@ -72,6 +76,18 @@ async def rpc(event_loop):
     connection = AmqpConnection(hosts=[(TEST_RABBITMQ_HOST, 5672)], virtualhost=TEST_VHOST,
                                 loop=event_loop)
     rpc = AsyncAmqpRpc(connection=connection)
+    await rpc.connect()
+    yield rpc
+    await rpc.stop()
+
+
+@pytest.fixture
+async def rpc_with_specified_callback_exchange(event_loop, request):
+    """Ready-to-work RPC connected to RabbitMQ with specified callback exchange"""
+    connection = AmqpConnection(hosts=[(TEST_RABBITMQ_HOST, 5672)], virtualhost=TEST_VHOST,
+                                loop=event_loop)
+    rpc = AsyncAmqpRpc(connection=connection, callback_exchange=request.param)
+    rpc._on_response = MagicMock()
     await rpc.connect()
     yield rpc
     await rpc.stop()

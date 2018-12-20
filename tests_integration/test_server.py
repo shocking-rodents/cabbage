@@ -10,6 +10,7 @@ from cabbage import AmqpConnection, AsyncAmqpRpc
 pytestmark = pytest.mark.asyncio
 
 TEST_RABBITMQ_HOST = getenv('TEST_RABBITMQ_HOST', 'localhost')
+TEST_VHOST = 'cabbage_test'
 
 
 async def test_sanity(management):
@@ -45,3 +46,16 @@ async def test_consume(rpc: AsyncAmqpRpc, management, exchange, queue):
     management.publish(exchange=exchange, routing_key=queue, data=sent_data)
     await asyncio.sleep(0.1)  # give the event loop a chance to process it
     request_handler.assert_called_once_with(sent_data)
+
+
+@pytest.mark.parametrize('rpc_with_specified_callback_exchange',
+                         ['', 'public', 'private', 'another_exchange'], indirect=True)
+async def test_non_standard_exchanges(management, rpc_with_specified_callback_exchange: AsyncAmqpRpc):
+    sent_data = 'Test. Тест. 実験。'
+    exchange = rpc_with_specified_callback_exchange.callback_exchange
+    queue = rpc_with_specified_callback_exchange.callback_queue
+    assert exchange in [exchange_element['name'] for exchange_element in management.get_exchanges()]
+    management.publish(exchange=exchange, routing_key=queue, data=sent_data)
+    await asyncio.sleep(0.1)  # give the event loop a chance to process it
+    rpc_with_specified_callback_exchange._on_response.assert_called_once()
+    assert rpc_with_specified_callback_exchange._on_response.call_args[0][1] == sent_data.encode('utf-8')

@@ -18,9 +18,11 @@ TEST_DELAY = 0.2
 class TestConnect:
     """AsyncAmqpRpc.connect"""
 
-    async def test_ok(self, event_loop):
+    @pytest.mark.parametrize('exchange', ['', 'seldom-exchange', 'public', 'private'])
+    async def test_ok(self, event_loop, exchange):
         connection = cabbage.AmqpConnection(hosts=[(HOST, 5672)], loop=event_loop)
         rpc = cabbage.AsyncAmqpRpc(connection=connection)
+        rpc.callback_exchange = exchange
         with patch('cabbage.amqp.aioamqp_connect') as mock_connect:
             mock_connect.return_value = (MockTransport(), MockProtocol())
             await rpc.connect()
@@ -30,6 +32,15 @@ class TestConnect:
         rpc.channel.queue_declare.assert_called_with(exclusive=True)
         rpc.channel.basic_consume.assert_called_once_with(callback=rpc._on_response,
                                                           queue_name=rpc.callback_queue)
+        if rpc.callback_exchange != '':
+            rpc.channel.exchange_declare.assert_called_once_with(
+                exchange_name=rpc.callback_exchange, type_name='topic', durable=True)
+            rpc.channel.queue_bind.assert_called_once_with(queue_name=rpc.callback_queue,
+                                                           exchange_name=rpc.callback_exchange,
+                                                           routing_key=rpc.callback_queue)
+        else:
+            rpc.channel.exchange_declare.assert_not_called()
+            rpc.channel.queue_bind.assert_not_called()
 
 
 class TestSubscribe:

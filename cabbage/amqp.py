@@ -100,7 +100,7 @@ class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
                  exchange_params: Mapping = None, queue_params: Mapping = None,
                  subscriptions=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
-                 shutdown_timeout=60.0, connection_delay: float = 0.1):
+                 shutdown_timeout=60.0, connection_delay: float = 0.1, callback_exchange=''):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
@@ -124,7 +124,8 @@ class AsyncAmqpRpc:
         self.keep_running = True
         self.channel = None
         self.callback_queue = None
-        self._responses = {}  # type: Dict[str, asyncio.Future]
+        self.callback_exchange = callback_exchange
+        self._responses: Dict[str, asyncio.Future] = {}
         self._tasks = set()
         self._subscriptions = set()
         self.connection_delay = connection_delay
@@ -133,13 +134,23 @@ class AsyncAmqpRpc:
         await self.connection.connect()
         self.channel = await self.connection.channel()
 
-        # setup client
         result = await self.channel.queue_declare(exclusive=True)
         self.callback_queue = result['queue']
+
+        # setup client
+        if self.callback_exchange != '':
+            # operation not permitted on default exchange
+            await self.channel.exchange_declare(exchange_name=self.callback_exchange, type_name='topic', durable=True)
+            await self.channel.queue_bind(
+                queue_name=self.callback_queue,
+                exchange_name=self.callback_exchange,
+                routing_key=self.callback_queue)
+
         await self.channel.basic_consume(
             callback=self._on_response,
             queue_name=self.callback_queue,
         )
+
         logger.debug(f'listening on callback queue {result["queue"]}')
 
     # AMQP server implementation
