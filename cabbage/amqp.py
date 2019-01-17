@@ -83,7 +83,7 @@ class AmqpConnection:
                 logger.error(f'connection failed, not retrying: <{e.__class__.__name__}> {e}')
                 raise
             else:
-                logger.info(f'connected to {host}:{port}')
+                logger.info(f'wait connection to {host}:{port}')
                 break
 
     async def disconnect(self):
@@ -287,6 +287,7 @@ class AsyncAmqpRpc:
         """aiohttp-compatible on_startup coroutine. """
         asyncio.ensure_future(self.run_server())
         await self.wait_connected()
+        logger.info('Waiting finished. Connected successfully.')
 
     async def stop(self, app=None):
         """aiohttp-compatible on_shutdown coroutine. """
