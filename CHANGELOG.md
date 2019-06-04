@@ -1,6 +1,12 @@
 CHANGELOG
 =========
 
+1.0.0 (2019-06-04)
+------------------
+
+- Public release
+- Updated aiompq requirement
+
 0.9.0 (2018-11-30)
 ------------------
 
