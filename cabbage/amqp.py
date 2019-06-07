@@ -6,14 +6,19 @@ import random
 import socket
 import ssl as ssl_module
 import uuid
+from contextlib import ExitStack
 from functools import partial
 from itertools import cycle
 from typing import Optional, Callable, Union, Awaitable, Mapping, Dict
 
+import aiozipkin
 from aioamqp.channel import Channel
 from aioamqp.envelope import Envelope
 from aioamqp.properties import Properties
 from aioamqp.protocol import AmqpProtocol, CONNECTING, OPEN
+from aiozipkin import Tracer
+from aiozipkin.span import Span
+from dataclasses import dataclass
 
 from .utils import FibonaccianBackoff
 
@@ -96,11 +101,19 @@ class AmqpConnection:
         return bool(self.protocol) and self.protocol.state == OPEN
 
 
+@dataclass
+class RpcRequest:
+    envelope: Envelope
+    properties: Properties
+    span: Optional[Span]
+
+
 class AsyncAmqpRpc:
     def __init__(self, connection: AmqpConnection,
                  exchange_params: Mapping = None, queue_params: Mapping = None,
                  subscriptions=None, prefetch_count=1, raw=False, default_response_timeout=15.0,
-                 shutdown_timeout=60.0, connection_delay: float = 0.1, callback_exchange=''):
+                 shutdown_timeout=60.0, connection_delay: float = 0.1, callback_exchange='',
+                 tracer: Optional[Tracer] = None):
         """
         All arguments are optional. If `request_handler` is not supplied or None, RPC works only in client mode.
 
@@ -129,6 +142,7 @@ class AsyncAmqpRpc:
         self._tasks = set()
         self._subscriptions = set()
         self.connection_delay = connection_delay
+        self.tracer = tracer
 
     async def connect(self):
         await self.connection.connect()
@@ -241,35 +255,51 @@ class AsyncAmqpRpc:
     async def handle_rpc(self, channel: Channel, body: bytes, envelope: Envelope, properties: Properties,
                          request_handler):
         """Process request with handler and send response if needed. """
-        try:
-            data = body if self.raw else body.decode('utf-8')
-            logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
-                         f'correlation_id {properties.correlation_id}')
-            response = request_handler(data)
-            if inspect.isawaitable(response):
-                response = await response
-        except Exception as e:
-            logger.error(f'handle_rpc. error <{e.__class__.__name__}> {e}, routing_key {properties.reply_to}, '
-                         f'correlation_id {properties.correlation_id}')
-            await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
-        else:
-            responding = properties.reply_to is not None and response is not None
-            logger.debug(f'{"< " * responding}handle_rpc: responding? {responding}, routing_key {properties.reply_to}, '
-                         f'correlation_id {properties.correlation_id}, result {response}')
-            if responding:
-                response_params = dict(
-                    payload=response if self.raw else response.encode('utf-8'),
-                    exchange_name='',
-                    routing_key=properties.reply_to
-                )
+        stack = ExitStack()
+        span = None
+        if self.tracer is not None:
+            ctx = aiozipkin.make_context(properties.headers or {})
+            if ctx is not None:
+                span = stack.enter_context(self.tracer.new_child(ctx))
+                span.name('amqp.handle_rpc')
+                span.kind(aiozipkin.SERVER)
+        with stack:
+            try:
+                data = body if self.raw else body.decode('utf-8')
+                logger.debug(f'> handle_rpc: data {data}, routing_key {properties.reply_to}, '
+                             f'correlation_id {properties.correlation_id}')
+                request = RpcRequest(envelope, properties, span=span)
+                kwargs = {}
+                if 'request_meta' in inspect.signature(request_handler).parameters:
+                    kwargs['request_meta'] = request
+                response = request_handler(data, **kwargs)
+                if inspect.isawaitable(response):
+                    response = await response
+            except Exception as e:
+                logger.error(f'handle_rpc. error <{e.__class__.__name__}> {e}, routing_key {properties.reply_to}, '
+                             f'correlation_id {properties.correlation_id}')
+                await channel.basic_client_nack(delivery_tag=envelope.delivery_tag)
+            else:
+                responding = properties.reply_to is not None and response is not None
+                logger.debug(f'{"< " * responding}handle_rpc: responding? {responding}, routing_key '
+                             f'{properties.reply_to}, correlation_id {properties.correlation_id}, result {response}')
+                if responding:
+                    response_params = dict(
+                        payload=response if self.raw else response.encode('utf-8'),
+                        exchange_name='',
+                        routing_key=properties.reply_to
+                    )
 
-                if properties.correlation_id:
-                    response_params['properties'] = {'correlation_id': properties.correlation_id}
+                    if properties.correlation_id:
+                        response_params['properties'] = {'correlation_id': properties.correlation_id}
 
-                await channel.basic_publish(**response_params)
+                    if span is not None:
+                        response_params['properties']['headers'] = span.context.make_headers()
 
-            if channel.is_open:
-                await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
+                    await channel.basic_publish(**response_params)
+
+                if channel.is_open:
+                    await channel.basic_client_ack(delivery_tag=envelope.delivery_tag)
 
     async def run_server(self):
         """Main routine for the server. """
@@ -303,11 +333,14 @@ class AsyncAmqpRpc:
             level(f'{len(done)} task(s) finished, {len(pending)} task(s) did not finish in time')
         self.keep_running = False
         await self.connection.disconnect()
+        if self.tracer is not None:
+            await self.tracer.close()
 
     # AMQP client implementation
 
     async def send_rpc(self, destination: str, data: Union[str, bytes], exchange: str = '', await_response=True,
-                       timeout: float = None, correlation_id: str = None) -> Union[str, bytes, None]:
+                       timeout: float = None, correlation_id: str = None,
+                       span: Optional[Span] = None) -> Union[str, bytes, None]:
         """
         Execute a method on remote server. Sends `data` to `destination` routing key.
 
@@ -333,21 +366,29 @@ class AsyncAmqpRpc:
             }
         logger.debug(f'< send_rpc: destination {destination}, data {data}, '
                      f'awaiting? {await_response}, timeout {timeout}, properties {properties}')
-        await self.channel.basic_publish(
-            exchange_name=exchange,
-            routing_key=destination,
-            properties=properties,
-            payload=payload,
-        )
+        stack = ExitStack()
+        logger.debug(f'{self.tracer}, {span}')
+        if self.tracer is not None and span is not None:
+            nested_span = stack.enter_context(self.tracer.new_child(span.context))
+            nested_span.name('amqp.send_rpc')
+            nested_span.kind(aiozipkin.CLIENT)
+            properties['headers'] = span.context.make_headers()
+        with stack:
+            await self.channel.basic_publish(
+                exchange_name=exchange,
+                routing_key=destination,
+                properties=properties,
+                payload=payload,
+            )
 
-        if await_response:
-            if timeout is None:
-                timeout = self.default_response_timeout
-            response = await self._await_response(correlation_id=correlation_id, timeout=timeout)
-            if not raw:
-                response = response.decode('utf-8')
-            logger.debug(f'> send_rpc: response {response}')
-            return response
+            if await_response:
+                if timeout is None:
+                    timeout = self.default_response_timeout
+                response = await self._await_response(correlation_id=correlation_id, timeout=timeout)
+                if not raw:
+                    response = response.decode('utf-8')
+                logger.debug(f'> send_rpc: response {response}')
+                return response
 
     async def _await_response(self, correlation_id, timeout):
         """Wait for a response with given correlation id. Blocks current Task. """
