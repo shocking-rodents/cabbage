@@ -1,20 +1,33 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import logging
 import random
 
-from cabbage import AsyncAmqpRpc, AmqpConnection
+from cabbage import AmqpConnection, AsyncAmqpRpc
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
 
 
-async def main():
-    connection = AmqpConnection()
-    rpc = AsyncAmqpRpc(connection=connection)
+async def main(rpc):
     await rpc.connect()
 
     while True:
         n = random.randint(1, 100)
         hex_n = await rpc.send_rpc('my_queue', str(n))
-        print(n, hex_n)
+        logging.info('request: {}, response: {}'.format(n, hex_n))
         await asyncio.sleep(1)
 
+
 if __name__ == '__main__':
-    asyncio.get_event_loop().run_until_complete(main())
+    loop = asyncio.get_event_loop()
+    connection = AmqpConnection()
+    rpc = AsyncAmqpRpc(connection)
+    try:
+        loop.run_until_complete(main(rpc))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.run_until_complete(rpc.stop())

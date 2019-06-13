@@ -4,12 +4,15 @@ import logging
 
 from cabbage import AmqpConnection, AsyncAmqpRpc
 
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+)
 
 
 async def handler(request: str) -> str:
     n = int(request)
-    print(n)
+    logging.info(n)
     return hex(n)
 
 
